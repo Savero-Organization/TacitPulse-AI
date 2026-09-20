@@ -1,4 +1,5 @@
 {
-    "cmake.sourceDirectory": "/home/savero/AI/tacit_pulse_ai/android/app/src/main/cpp",
-    "java.configuration.updateBuildConfiguration": "interactive"
+  "cmake.sourceDirectory": "/home/savero/AI/tacit_pulse_ai/android/app/src/main/cpp",
+  "java.configuration.updateBuildConfiguration": "interactive",
+  "dart.flutterSdkPath": ".fvm/versions/3.47.4"
 }

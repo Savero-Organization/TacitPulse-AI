@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/models/chat_message.dart';
@@ -138,16 +139,25 @@ class ChatCubit extends Cubit<ChatState> {
             }).toList();
             emit(state.copyWith(messages: msgs));
           },
-          onError: (Object error) => _finishStreaming(assistantId),
+          onError: (Object error) => _finishStreaming(assistantId, error: error),
           onDone: () => _finishStreaming(assistantId),
         );
   }
 
-  void _finishStreaming(String assistantId) {
+  void _finishStreaming(String assistantId, {Object? error}) {
     if (isClosed) return;
+    if (error != null) {
+      debugPrint('[ChatCubit] stream error: $error');
+    }
     final msgs = state.messages.map((m) {
       if (m.id != assistantId) return m;
-      return m.copyWith(isStreaming: false);
+      final note = error == null
+          ? ''
+          : '\n\n⚠️ Gagal memproses: $error';
+      return m.copyWith(
+        isStreaming: false,
+        text: m.text + note,
+      );
     }).toList();
     emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
   }

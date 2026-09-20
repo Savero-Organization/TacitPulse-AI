@@ -10,6 +10,7 @@
 //     belum ada, initialize() return false dan caller boleh pakai fallback.
 
 import 'dart:async';
+import 'dart:developer' show log;
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -27,6 +28,16 @@ const String _kDefaultSystemPrompt =
     'Kamu adalah asisten teknisi maintenance pabrik. Jawab singkat, padat, '
     'dan langsung praktis. Jika menjawab dari SOP atau log mesin, sebutkan '
     'sumbernya. Jangan menebak fakta yang tidak ada di sumber.';
+
+/// Error generasi yang membawa pesan diagnostik dari native.
+class LLMInferenceException implements Exception {
+  LLMInferenceException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'LLMInferenceException: $message';
+}
 
 class LLMInference {
   LLMInference._();
@@ -126,8 +137,15 @@ class LLMInference {
         if (type == 'piece') {
           final text = item['text'] as String?;
           if (text != null && text.isNotEmpty) yield text;
-        } else if (type == 'done' || type == 'error') {
+        } else if (type == 'done') {
           break;
+        } else if (type == 'error') {
+          final message =
+              item['message'] as String? ?? 'gagal generasi (tanpa pesan)';
+          log('[LLMInference] generateStream error: $message');
+          // Dilontarkan sebagai stream error supaya caller (ChatCubit)
+          // bisa menangkapnya via onError — pesan tidak lagi dibuang diam-diam.
+          throw LLMInferenceException(message);
         }
       }
     } finally {
@@ -157,7 +175,12 @@ class LLMInference {
       await for (final Object? item in reply) {
         if (item is! Map) continue;
         if (item['type'] == 'result') return item['text'] as String?;
-        if (item['type'] == 'error') return null;
+        if (item['type'] == 'error') {
+          final message =
+              item['message'] as String? ?? 'gagal generasi (tanpa pesan)';
+          log('[LLMInference] generate error: $message');
+          return null;
+        }
       }
     } finally {
       reply.close();

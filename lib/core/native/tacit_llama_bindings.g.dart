@@ -22,6 +22,9 @@ class TacitLlamaBindings {
     ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName) lookup,
   ) : _lookup = lookup;
 
+  /// Evaluates a prompt into the model context (KV cache) without generating
+  /// new tokens. callback fires once per prompt token with its text piece and
+  /// may return non-zero to abort early. Returns 0 on success, -1 on error.
   int tacit_eval_prompt(
     ffi.Pointer<tacit_model> model,
     ffi.Pointer<ffi.Char> prompt,
@@ -52,6 +55,7 @@ class TacitLlamaBindings {
         )
       >();
 
+  /// Releases any state allocated by tacit_init_backend.
   void tacit_free_backend() {
     return _tacit_free_backend();
   }
@@ -61,6 +65,7 @@ class TacitLlamaBindings {
   late final _tacit_free_backend = _tacit_free_backendPtr
       .asFunction<void Function()>();
 
+  /// Frees a string returned by tacit_generate. NULL is fine.
   void tacit_free_string(ffi.Pointer<ffi.Char> s) {
     return _tacit_free_string(s);
   }
@@ -72,6 +77,12 @@ class TacitLlamaBindings {
   late final _tacit_free_string = _tacit_free_stringPtr
       .asFunction<void Function(ffi.Pointer<ffi.Char>)>();
 
+  /// Runs one synchronous completion.
+  /// prompt: UTF-8 text.
+  /// max_tokens: maximum number of tokens to generate.
+  /// temperature: 0.0f = greedy; > 0.0f = sampling.
+  /// Returns a malloc-allocated UTF-8 string (free with tacit_free_string),
+  /// or NULL on failure (query tacit_last_error).
   ffi.Pointer<ffi.Char> tacit_generate(
     ffi.Pointer<tacit_model> model,
     ffi.Pointer<ffi.Char> prompt,
@@ -102,6 +113,9 @@ class TacitLlamaBindings {
         )
       >();
 
+  /// Streaming completion.
+  /// piece is delivered through cb.
+  /// Returns 0 on success, non-zero on failure/abort.
   int tacit_generate_stream(
     ffi.Pointer<tacit_model> model,
     ffi.Pointer<ffi.Char> prompt,
@@ -145,6 +159,11 @@ class TacitLlamaBindings {
         )
       >();
 
+  /// Initializes the llama.cpp backend. Idempotent: the mutex-guarded
+  /// once-per-process flag makes repeat calls a no-op, whichever entry point
+  /// (this function or tacit_init_context) runs first.
+  /// Kept public for manual/advanced init; tacit_init_context() covers it in
+  /// the one-shot flow. llama_backend_free must be called before process exit.
   bool tacit_init_backend() {
     return _tacit_init_backend();
   }
@@ -154,6 +173,9 @@ class TacitLlamaBindings {
   late final _tacit_init_backend = _tacit_init_backendPtr
       .asFunction<bool Function()>();
 
+  /// One-shot initialization: llama.cpp backend + GGUF model + inference context,
+  /// all in a single call. Returns a handle usable by tacit_generate /
+  /// tacit_generate_stream, or NULL on failure (query tacit_last_error).
   ffi.Pointer<tacit_model> tacit_init_context(
     ffi.Pointer<ffi.Char> model_path,
   ) {
@@ -169,6 +191,7 @@ class TacitLlamaBindings {
   late final _tacit_init_context = _tacit_init_contextPtr
       .asFunction<ffi.Pointer<tacit_model> Function(ffi.Pointer<ffi.Char>)>();
 
+  /// Returns a null-terminated description, NULL if there was no error.
   ffi.Pointer<ffi.Char> tacit_last_error() {
     return _tacit_last_error();
   }
@@ -180,6 +203,7 @@ class TacitLlamaBindings {
   late final _tacit_last_error = _tacit_last_errorPtr
       .asFunction<ffi.Pointer<ffi.Char> Function()>();
 
+  /// Unloads the model and frees its context.
   void tacit_model_free(ffi.Pointer<tacit_model> model) {
     return _tacit_model_free(model);
   }
@@ -191,6 +215,10 @@ class TacitLlamaBindings {
   late final _tacit_model_free = _tacit_model_freePtr
       .asFunction<void Function(ffi.Pointer<tacit_model>)>();
 
+  /// Loads a GGUF model from a filesystem path.
+  /// Part of the split init sequence; tacit_init_context() calls this
+  /// internally, so callers normally don't need it directly.
+  /// Returns a handle, or NULL on failure.
   ffi.Pointer<tacit_model> tacit_model_load(ffi.Pointer<ffi.Char> model_path) {
     return _tacit_model_load(model_path);
   }
@@ -204,6 +232,8 @@ class TacitLlamaBindings {
   late final _tacit_model_load = _tacit_model_loadPtr
       .asFunction<ffi.Pointer<tacit_model> Function(ffi.Pointer<ffi.Char>)>();
 
+  /// Clears the KV cache.
+  /// Returns 0 on success, -1 on failure.
   int tacit_reset(ffi.Pointer<tacit_model> model) {
     return _tacit_reset(model);
   }
@@ -216,6 +246,11 @@ class TacitLlamaBindings {
       .asFunction<int Function(ffi.Pointer<tacit_model>)>();
 }
 
+/// Piece callback for tacit_eval_prompt and tacit_generate_stream.
+/// Called once per token piece with a null-terminated UTF-8 string.
+/// Return non-zero to abort early.
+/// Guarantee: pieces always contain valid UTF-8 (llama_token_to_piece
+/// returns UTF-8 bytes per the llama.cpp API contract).
 typedef TokenCallback = ffi.Pointer<ffi.NativeFunction<TokenCallbackFunction>>;
 typedef TokenCallbackFunction = ffi.Int Function(
   ffi.Pointer<ffi.Char> piece,
@@ -228,4 +263,5 @@ typedef DartTokenCallbackFunction = int Function(
 
 final class tacit_model extends ffi.Opaque {}
 
+/// Legacy alias kept so tacit_generate_stream callers keep compiling.
 typedef tacit_piece_cb = TokenCallback;

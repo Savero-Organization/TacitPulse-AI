@@ -61,6 +61,8 @@ char * tacit_generate(tacit_model * model,
 // Piece callback for tacit_eval_prompt and tacit_generate_stream.
 // Called once per token piece with a null-terminated UTF-8 string.
 // Return non-zero to abort early.
+// Guarantee: pieces always contain valid UTF-8 (llama_token_to_piece
+// returns UTF-8 bytes per the llama.cpp API contract).
 typedef int (*TokenCallback)(const char * piece, void * user_data);
 
 // Legacy alias kept so tacit_generate_stream callers keep compiling.

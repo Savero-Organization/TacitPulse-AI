@@ -10,6 +10,7 @@
 //     belum ada, initialize() return false dan caller boleh pakai fallback.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' show log;
 import 'dart:ffi';
 import 'dart:io';
@@ -286,7 +287,7 @@ void _workerGenerateStream(
       try {
         reply.send({
           'type': 'piece',
-          'text': piece.cast<Utf8>().toDartString(),
+          'text': _utf8String(piece),
         });
         return 0;
       } catch (_) {
@@ -342,7 +343,7 @@ void _workerGenerate(
         'message': _nativeError(bindings) ?? 'tacit_generate gagal',
       });
     } else {
-      final text = out.cast<Utf8>().toDartString();
+      final text = _utf8String(out);
       bindings.tacit_free_string(out);
       reply.send({'type': 'result', 'text': text});
     }
@@ -358,5 +359,15 @@ void _workerGenerate(
 String? _nativeError(TacitLlamaBindings bindings) {
   final ptr = bindings.tacit_last_error();
   if (ptr == nullptr) return null;
-  return ptr.cast<Utf8>().toDartString();
+  return _utf8String(ptr);
+}
+
+/// Decode string UTF-8 null-terminated dari native dengan toleransi malformed
+/// byte (menjadi U+FFFD, tidak melempar). Native dijamin UTF-8 oleh llama.cpp
+/// (llama_token_to_piece) — ini jaring pengaman kalau versi/konfigurasi
+/// berubah; toDartString() bawaan ffi malah melempar FormatException.
+String _utf8String(Pointer<Char> ptr) {
+  final utf8Ptr = ptr.cast<Utf8>();
+  final bytes = utf8Ptr.cast<Uint8>().asTypedList(utf8Ptr.length);
+  return utf8.decode(bytes, allowMalformed: true);
 }

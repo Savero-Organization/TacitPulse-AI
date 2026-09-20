@@ -58,10 +58,13 @@ char * tacit_generate(tacit_model * model,
                       int32_t max_tokens,
                       float temperature);
 
-// Piece callback for tacit_generate_stream.
-// Called once per generated token piece with a null-terminated UTF-8 string.
-// Return non-zero to abort generation early.
-typedef int (*tacit_piece_cb)(const char * piece, void * user_data);
+// Piece callback for tacit_eval_prompt and tacit_generate_stream.
+// Called once per token piece with a null-terminated UTF-8 string.
+// Return non-zero to abort early.
+typedef int (*TokenCallback)(const char * piece, void * user_data);
+
+// Legacy alias kept so tacit_generate_stream callers keep compiling.
+typedef TokenCallback tacit_piece_cb;
 
 // Streaming completion.
 // piece is delivered through cb.
@@ -75,6 +78,14 @@ int tacit_generate_stream(tacit_model * model,
 
 // Frees a string returned by tacit_generate. NULL is fine.
 void tacit_free_string(char * s);
+
+// Evaluates a prompt into the model context (KV cache) without generating
+// new tokens. callback fires once per prompt token with its text piece and
+// may return non-zero to abort early. Returns 0 on success, -1 on error.
+int tacit_eval_prompt(tacit_model * model,
+                      const char * prompt,
+                      TokenCallback callback,
+                      void * user_data);
 
 // Returns a null-terminated description, NULL if there was no error.
 const char * tacit_last_error(void);

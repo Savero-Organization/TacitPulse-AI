@@ -22,6 +22,36 @@ class TacitLlamaBindings {
     ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName) lookup,
   ) : _lookup = lookup;
 
+  int tacit_eval_prompt(
+    ffi.Pointer<tacit_model> model,
+    ffi.Pointer<ffi.Char> prompt,
+    TokenCallback callback,
+    ffi.Pointer<ffi.Void> user_data,
+  ) {
+    return _tacit_eval_prompt(model, prompt, callback, user_data);
+  }
+
+  late final _tacit_eval_promptPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<tacit_model>,
+            ffi.Pointer<ffi.Char>,
+            TokenCallback,
+            ffi.Pointer<ffi.Void>,
+          )
+        >
+      >('tacit_eval_prompt');
+  late final _tacit_eval_prompt = _tacit_eval_promptPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<tacit_model>,
+          ffi.Pointer<ffi.Char>,
+          TokenCallback,
+          ffi.Pointer<ffi.Void>,
+        )
+      >();
+
   void tacit_free_backend() {
     return _tacit_free_backend();
   }
@@ -186,15 +216,16 @@ class TacitLlamaBindings {
       .asFunction<int Function(ffi.Pointer<tacit_model>)>();
 }
 
+typedef TokenCallback = ffi.Pointer<ffi.NativeFunction<TokenCallbackFunction>>;
+typedef TokenCallbackFunction = ffi.Int Function(
+  ffi.Pointer<ffi.Char> piece,
+  ffi.Pointer<ffi.Void> user_data,
+);
+typedef DartTokenCallbackFunction = int Function(
+  ffi.Pointer<ffi.Char> piece,
+  ffi.Pointer<ffi.Void> user_data,
+);
+
 final class tacit_model extends ffi.Opaque {}
 
-typedef tacit_piece_cb =
-    ffi.Pointer<ffi.NativeFunction<tacit_piece_cbFunction>>;
-typedef tacit_piece_cbFunction = ffi.Int Function(
-  ffi.Pointer<ffi.Char> piece,
-  ffi.Pointer<ffi.Void> user_data,
-);
-typedef Darttacit_piece_cbFunction = int Function(
-  ffi.Pointer<ffi.Char> piece,
-  ffi.Pointer<ffi.Void> user_data,
-);
+typedef tacit_piece_cb = TokenCallback;

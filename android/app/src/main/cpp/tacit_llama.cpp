@@ -135,6 +135,23 @@ llama_sampler * build_sampler(float temperature) {
     return chain;
 }
 
+// Token id -> its text piece (empty for special tokens).
+std::string token_to_piece(const llama_vocab * vocab, llama_token id) {
+    char stack_buf[64];
+    int32_t plen = llama_token_to_piece(vocab, id, stack_buf, sizeof(stack_buf), 0, false);
+    if (plen < 0) {
+        // Bigger buffer needed; llama_token_to_piece returns the negated size.
+        std::vector<char> big(static_cast<size_t>(-plen + 1));
+        plen = llama_token_to_piece(vocab, id, big.data(), static_cast<int32_t>(big.size()), 0, false);
+        if (plen > 0) {
+            return std::string(big.data(), static_cast<size_t>(plen));
+        }
+    } else if (plen > 0) {
+        return std::string(stack_buf, static_cast<size_t>(plen));
+    }
+    return std::string();
+}
+
 // Core generation loop.
 bool generate_int(tacit_model * h,
                   const char * prompt,
@@ -184,20 +201,7 @@ bool generate_int(tacit_model * h,
         }
 
         // Token id -> text piece.
-        std::string piece;
-        {
-            char stack_buf[64];
-            int32_t plen = llama_token_to_piece(h->vocab, id, stack_buf, sizeof(stack_buf), 0, false);
-            if (plen < 0) {
-                std::vector<char> big(static_cast<size_t>(-plen + 1));
-                plen = llama_token_to_piece(h->vocab, id, big.data(), static_cast<int32_t>(big.size()), 0, false);
-                if (plen > 0) {
-                    piece.assign(big.data(), static_cast<size_t>(plen));
-                }
-            } else if (plen > 0) {
-                piece.assign(stack_buf, static_cast<size_t>(plen));
-            }
-        }
+        const std::string piece = token_to_piece(h->vocab, id);
 
         if (!piece.empty()) {
             if (!output.empty()) {
@@ -350,6 +354,45 @@ int tacit_generate_stream(tacit_model * model,
 
 void tacit_free_string(char * s) {
     free(s);
+}
+
+// Evaluates a prompt into the model context (KV cache) without generating
+// new tokens. The callback fires once per prompt token with its text piece
+// and may return non-zero to abort early. Returns 0 on success, -1 on error.
+int tacit_eval_prompt(tacit_model * model,
+                      const char * prompt,
+                      TokenCallback callback,
+                      void * user_data) {
+    if (model == nullptr || prompt == nullptr || callback == nullptr) {
+        set_error("null model, prompt or callback");
+        return -1;
+    }
+
+    std::lock_guard<std::mutex> lock(model->mtx);
+
+    std::vector<llama_token> prompt_tokens;
+    if (!tokenize(model->vocab, prompt, prompt_tokens)) {
+        set_error("failed to tokenize the prompt");
+        return -1;
+    }
+
+    // Process the whole prompt in one batch -> fills the KV cache.
+    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), static_cast<int32_t>(prompt_tokens.size()));
+    const int32_t rc = llama_decode(model->ctx, batch);
+    if (rc != 0) {
+        set_error(rc == 1
+                      ? "llama_decode: KV cache full (increase context size)"
+                      : "llama_decode(prompt) failed");
+        return -1;
+    }
+
+    for (llama_token id : prompt_tokens) {
+        const std::string piece = token_to_piece(model->vocab, id);
+        if (!piece.empty() && callback(piece.c_str(), user_data) != 0) {
+            break; // caller asked to abort early
+        }
+    }
+    return 0;
 }
 
 const char * tacit_last_error(void) {

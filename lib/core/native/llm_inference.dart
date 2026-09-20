@@ -251,12 +251,12 @@ void _workerGenerateStream(
   final temperature = ((msg['temperature'] as num?) ?? 0.7).toDouble();
 
   final promptPtr = prompt.toNativeUtf8();
-  NativeCallable<tacit_piece_cbFunction>? callable;
+  NativeCallable<TokenCallbackFunction>? callable;
   try {
     // isolateLocal: callback harus dipanggil dari thread yang sama dengan
     // native call — persis skenario kita (blocking call di isolate ini).
     // Return non-zero dari callback = minta native menghentikan generasi.
-    callable = NativeCallable<tacit_piece_cbFunction>.isolateLocal((
+    callable = NativeCallable<TokenCallbackFunction>.isolateLocal((
       Pointer<Char> piece,
       Pointer<Void> _,
     ) {

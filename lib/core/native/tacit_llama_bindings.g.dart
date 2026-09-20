@@ -124,6 +124,21 @@ class TacitLlamaBindings {
   late final _tacit_init_backend = _tacit_init_backendPtr
       .asFunction<bool Function()>();
 
+  ffi.Pointer<tacit_model> tacit_init_context(
+    ffi.Pointer<ffi.Char> model_path,
+  ) {
+    return _tacit_init_context(model_path);
+  }
+
+  late final _tacit_init_contextPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Pointer<tacit_model> Function(ffi.Pointer<ffi.Char>)
+        >
+      >('tacit_init_context');
+  late final _tacit_init_context = _tacit_init_contextPtr
+      .asFunction<ffi.Pointer<tacit_model> Function(ffi.Pointer<ffi.Char>)>();
+
   ffi.Pointer<ffi.Char> tacit_last_error() {
     return _tacit_last_error();
   }

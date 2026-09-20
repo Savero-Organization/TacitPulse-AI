@@ -20,20 +20,6 @@
 #define LOGI(...) fprintf(stderr, "[TacitPulse_Native] " __VA_ARGS__)
 #endif
 
-namespace {
-
-// Human-readable error for the calling thread.
-thread_local char g_last_error[1024];
-
-void set_error(const char * message) {
-    snprintf(g_last_error, sizeof(g_last_error), "%s", message);
-}
-
-// Max generation context.
-constexpr uint32_t kDefaultNContext = 4096;
-
-}
-
 // Opaque type declared in tacit_llama.h.
 struct tacit_model {
     llama_model * model = nullptr;
@@ -43,6 +29,73 @@ struct tacit_model {
     llama_token eot = -1;
     std::mutex mtx;
 };
+
+namespace {
+
+// Human-readable error for the calling thread.
+thread_local char g_last_error[1024];
+
+void set_error(const char * message) {
+    snprintf(g_last_error, sizeof(g_last_error), "%s", message);
+}
+
+// Guards llama backend init so it happens exactly once per process,
+// no matter which entry point (tacit_init_backend / tacit_init_context) runs first.
+std::mutex g_backend_mtx;
+bool g_backend_initialized = false;
+
+// Max generation context.
+constexpr uint32_t kDefaultNContext = 4096;
+
+// Creates the model handle (loads GGUF + creates inference context).
+// Used by tacit_model_load and tacit_init_context.
+tacit_model * model_load_internal(const char * model_path) {
+    if (model_path == nullptr || model_path[0] == '\0') {
+        set_error("model_path is empty");
+        return nullptr;
+    }
+
+    auto * h = new (std::nothrow) tacit_model;
+    if (h == nullptr) {
+        set_error("out of memory");
+        return nullptr;
+    }
+
+    h->model = llama_model_load_from_file(model_path, llama_model_default_params());
+    if (h->model == nullptr) {
+        set_error("failed to load GGUF model");
+        delete h;
+        return nullptr;
+    }
+
+    llama_context_params cparams = llama_context_default_params();
+    cparams.n_ctx = kDefaultNContext;
+
+    h->ctx = llama_init_from_model(h->model, cparams);
+    if (h->ctx == nullptr) {
+        set_error("failed to create inference context");
+        llama_model_free(h->model);
+        delete h;
+        return nullptr;
+    }
+
+    h->vocab = llama_model_get_vocab(h->model);
+    if (h->vocab == nullptr) {
+        set_error("model has no vocabulary");
+        llama_free(h->ctx);
+        llama_model_free(h->model);
+        delete h;
+        return nullptr;
+    }
+
+    h->eos = llama_vocab_eos(h->vocab);
+    h->eot = llama_vocab_eot(h->vocab);
+
+    LOGI("model loaded: %s", model_path);
+    return h;
+}
+
+} // namespace
 
 namespace {
 
@@ -184,60 +237,41 @@ bool generate_int(tacit_model * h,
 extern "C" {
 
 bool tacit_init_backend(void) {
-    llama_backend_init();
-    LOGI("llama.cpp backend for TacitPulse AI initialized successfully!");
+    std::lock_guard<std::mutex> lock(g_backend_mtx);
+    if (!g_backend_initialized) {
+        llama_backend_init();
+        g_backend_initialized = true;
+        LOGI("llama.cpp backend for TacitPulse AI initialized successfully!");
+    }
     return true;
 }
 
 void tacit_free_backend(void) {
-    llama_backend_free();
-    LOGI("llama.cpp backend freed.");
+    std::lock_guard<std::mutex> lock(g_backend_mtx);
+    if (g_backend_initialized) {
+        llama_backend_free();
+        g_backend_initialized = false;
+        LOGI("llama.cpp backend freed.");
+    }
 }
 
 tacit_model * tacit_model_load(const char * model_path) {
-    if (model_path == nullptr || model_path[0] == '\0') {
-        set_error("model_path is empty");
-        return nullptr;
+    return model_load_internal(model_path);
+}
+
+// One-shot init: llama backend + GGUF model + inference context.
+// Returns a handle usable by tacit_generate / tacit_generate_stream,
+// or NULL on failure (query tacit_last_error).
+tacit_model * tacit_init_context(const char * model_path) {
+    {
+        std::lock_guard<std::mutex> lock(g_backend_mtx);
+        if (!g_backend_initialized) {
+            llama_backend_init();
+            g_backend_initialized = true;
+            LOGI("llama.cpp backend initialized via tacit_init_context.");
+        }
     }
-
-    auto * h = new (std::nothrow) tacit_model;
-    if (h == nullptr) {
-        set_error("out of memory");
-        return nullptr;
-    }
-
-    h->model = llama_model_load_from_file(model_path, llama_model_default_params());
-    if (h->model == nullptr) {
-        set_error("failed to load GGUF model");
-        delete h;
-        return nullptr;
-    }
-
-    llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = kDefaultNContext;
-
-    h->ctx = llama_init_from_model(h->model, cparams);
-    if (h->ctx == nullptr) {
-        set_error("failed to create inference context");
-        llama_model_free(h->model);
-        delete h;
-        return nullptr;
-    }
-
-    h->vocab = llama_model_get_vocab(h->model);
-    if (h->vocab == nullptr) {
-        set_error("model has no vocabulary");
-        llama_free(h->ctx);
-        llama_model_free(h->model);
-        delete h;
-        return nullptr;
-    }
-
-    h->eos = llama_vocab_eos(h->vocab);
-    h->eot = llama_vocab_eot(h->vocab);
-
-    LOGI("model loaded: %s", model_path);
-    return h;
+    return model_load_internal(model_path);
 }
 
 void tacit_model_free(tacit_model * model) {

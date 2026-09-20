@@ -204,18 +204,10 @@ void _workerMain(List<Object?> args) {
     return;
   }
 
-  if (!bindings.tacit_init_backend()) {
-    mainPort.send({
-      'type': 'init',
-      'ok': false,
-      'error': _nativeError(bindings) ?? 'tacit_init_backend gagal',
-    });
-    return;
-  }
-
+  // tacit_init_context = backend + load model + create context, satu call native.
   final Pointer<tacit_model> model = _loadModel(bindings, modelPath);
   if (model == nullptr) {
-    final error = _nativeError(bindings) ?? 'tacit_model_load gagal';
+    final error = _nativeError(bindings) ?? 'tacit_init_context gagal';
     bindings.tacit_free_backend();
     mainPort.send({'type': 'init', 'ok': false, 'error': error});
     return;
@@ -242,7 +234,7 @@ void _workerMain(List<Object?> args) {
 Pointer<tacit_model> _loadModel(TacitLlamaBindings bindings, String path) {
   final pathPtr = path.toNativeUtf8();
   try {
-    return bindings.tacit_model_load(pathPtr.cast<Char>());
+    return bindings.tacit_init_context(pathPtr.cast<Char>());
   } finally {
     malloc.free(pathPtr);
   }

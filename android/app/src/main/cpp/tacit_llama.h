@@ -35,6 +35,11 @@ void tacit_free_backend(void);
 // Returns a handle, or NULL on failure.
 tacit_model * tacit_model_load(const char * model_path);
 
+// One-shot initialization: llama.cpp backend + GGUF model + inference context,
+// all in a single call. Returns a handle usable by tacit_generate /
+// tacit_generate_stream, or NULL on failure (query tacit_last_error).
+tacit_model * tacit_init_context(const char * model_path);
+
 // Unloads the model and frees its context.
 void tacit_model_free(tacit_model * model);
 

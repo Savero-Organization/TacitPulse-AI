@@ -1,0 +1,32 @@
+# ffigen config: generate Dart binding from the tacit_llama C-API.
+#
+# Usage:
+#   dart run ffigen --config ffigen.yaml
+#
+name: TacitLlamaBindings
+description: Dart FFI bindings for the tacit_llama C-API (llama.cpp bridge).
+output: lib/core/native/tacit_llama_bindings.g.dart
+headers:
+  entry-points:
+    - android/app/src/main/cpp/tacit_llama.h
+  # ffigen 20.x matches these as globs against the whole file path, so the
+  # entry must be '**/tacit_llama.h' (a bare 'tacit_llama.h' rejects our own
+  # header and generates an empty binding file). This also keeps transitive
+  # stdbool/stdint typedef noise out of the generated Dart.
+  include-directives:
+    - '**/tacit_llama.h'
+preamble: |
+  // GENERATED FILE - DO NOT EDIT.
+  // ignore_for_file: type=lint, unused_import, camel_case_types, non_constant_identifier_names
+compiler-opts:
+  # ffigen bundles its own clang which lacks the C standard headers on Arch.
+  # Point it at the system libclang include tree so `stdbool.h` etc. resolve.
+  - '-isystem/usr/lib/clang/22/include'
+  - '-isystem/usr/include'
+structs:
+  # tacit_model is intentionally opaque (its definition lives only in
+  # tacit_llama.cpp). Excluding it from the include filters makes ffigen
+  # treat it as an opaque dependency -> generated as an opaque Dart class,
+  # so our functions resolve Pointer<tacit_model> correctly.
+  exclude:
+    - tacit_model

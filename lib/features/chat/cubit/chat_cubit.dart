@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/models/chat_message.dart';
 import '../../../core/models/citation.dart';
+import '../../../core/native/llm_inference.dart';
 import '../../mock_data.dart';
 
 enum ChatStatus { idle, streaming, recording, paused }
@@ -36,20 +38,44 @@ class ChatState {
   }
 }
 
-/// Cubit simulasi RAG chat: output token stream llama.cpp akan
-/// dihubungkan ke [streamWord] dari native FFI nanti.
+/// Cubit RAG chat: output token real dari llama.cpp (via FFI) di-streaming
+/// ke UI. Kalau model belum ter-load (tidak ada .gguf), jatuh ke simulasi
+/// mock supaya demo tetap berjalan.
 class ChatCubit extends Cubit<ChatState> {
-  ChatCubit() : super(ChatState(messages: MockData.buildMessages()));
+  ChatCubit({LLMInference? llm})
+    : _llm = llm ?? LLMInference.instance,
+      super(ChatState(messages: MockData.buildMessages()));
+
+  final LLMInference _llm;
 
   Timer? _tokenTimer;
+  StreamSubscription<String>? _llmSub;
   int _wordIndex = 0;
 
+  /// Memastikan native backend+model siap (dipanggil sekali dari UI).
+  /// Meng-update [ChatState.isModelLoaded] sesuai hasil inisialisasi.
+  Future<void> init() async {
+    if (_llm.isReady) {
+      emit(state.copyWith(isModelLoaded: true));
+      return;
+    }
+    final ok = await _llm.initialize();
+    if (!isClosed) {
+      emit(state.copyWith(isModelLoaded: ok, hallucinationGuard: ok));
+    }
+  }
+
   void startStreaming(String question) {
-    if (state.status == ChatStatus.streaming || state.status == ChatStatus.recording) return;
+    if (state.status == ChatStatus.streaming ||
+        state.status == ChatStatus.recording) {
+      return;
+    }
     final userMsg = ChatMessage(
       id: 'm-${DateTime.now().microsecondsSinceEpoch}',
       role: ChatRole.user,
-      text: question.trim().isEmpty ? 'Suara teknisi (tersegmentasi teks)' : question.trim(),
+      text: question.trim().isEmpty
+          ? 'Suara teknisi (tersegmentasi teks)'
+          : question.trim(),
       timestamp: DateTime.now(),
     );
     emit(state.copyWith(messages: [...state.messages, userMsg]));
@@ -73,22 +99,73 @@ class ChatCubit extends Cubit<ChatState> {
       ),
     ];
 
-    emit(state.copyWith(
-      messages: [
-        ...state.messages,
-        ChatMessage(
-          id: 'm-${DateTime.now().microsecondsSinceEpoch + 1}',
-          role: ChatRole.assistant,
-          text: '',
-          timestamp: DateTime.now(),
-          isStreaming: true,
-          citations: citationStream,
-        ),
-      ],
-      status: ChatStatus.streaming,
-      hallucinationGuard: true,
-    ));
+    emit(
+      state.copyWith(
+        messages: [
+          ...state.messages,
+          ChatMessage(
+            id: 'm-${DateTime.now().microsecondsSinceEpoch + 1}',
+            role: ChatRole.assistant,
+            text: '',
+            timestamp: DateTime.now(),
+            isStreaming: true,
+            citations: citationStream,
+          ),
+        ],
+        status: ChatStatus.streaming,
+        hallucinationGuard: true,
+      ),
+    );
 
+    if (_llm.isReady) {
+      _streamNative(question);
+    } else {
+      _streamMock();
+    }
+  }
+
+  /// Stream asli: token per-piece dari llama.cpp melalui worker isolate.
+  void _streamNative(String question) {
+    _llmSub?.cancel();
+    final assistantId = state.messages.lastWhere((m) => m.isStreaming).id;
+    _llmSub = _llm
+        .generateStream(question)
+        .listen(
+          (piece) {
+            if (isClosed) return;
+            final msgs = state.messages.map((m) {
+              if (m.id != assistantId) return m;
+              return m.copyWith(text: m.text.isEmpty ? piece : m.text + piece);
+            }).toList();
+            emit(state.copyWith(messages: msgs));
+          },
+          onError: (Object error) => _finishStreaming(assistantId, error: error),
+          onDone: () => _finishStreaming(assistantId),
+        );
+  }
+
+  void _finishStreaming(String assistantId, {Object? error}) {
+    if (isClosed) return;
+    if (error != null) {
+      debugPrint('[ChatCubit] stream error: $error');
+    }
+    final msgs = state.messages.map((m) {
+      if (m.id != assistantId) return m;
+      // Detail error native tidak ditampilkan ke pengguna (bisa berisi path
+      // file / internal llama.cpp) — cukup log; UI kasih pesan generik.
+      final note = error == null
+          ? ''
+          : '\n\n⚠️ Gagal memproses. Periksa log untuk detail.';
+      return m.copyWith(
+        isStreaming: false,
+        text: m.text + note,
+      );
+    }).toList();
+    emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
+  }
+
+  /// Fallback simulasi (dipakai kalau model belum ada / native tidak siap).
+  void _streamMock() {
     _wordIndex = 0;
     _tokenTimer?.cancel();
     _tokenTimer = Timer.periodic(const Duration(milliseconds: 140), (_) {
@@ -96,7 +173,9 @@ class ChatCubit extends Cubit<ChatState> {
       final words = MockData.streamWords;
       if (_wordIndex >= words.length) {
         _tokenTimer?.cancel();
-        final msgs = state.messages.map((m) => m.isStreaming ? m.copyWith(isStreaming: false) : m).toList();
+        final msgs = state.messages
+            .map((m) => m.isStreaming ? m.copyWith(isStreaming: false) : m)
+            .toList();
         emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
         return;
       }
@@ -134,12 +213,18 @@ class ChatCubit extends Cubit<ChatState> {
       isVoice: true,
       draftSopId: 'n-draft-1',
     );
-    emit(state.copyWith(messages: [...state.messages, voiceMsg], status: ChatStatus.idle));
+    emit(
+      state.copyWith(
+        messages: [...state.messages, voiceMsg],
+        status: ChatStatus.idle,
+      ),
+    );
   }
 
   @override
   Future<void> close() {
     _tokenTimer?.cancel();
+    _llmSub?.cancel();
     return super.close();
   }
 }

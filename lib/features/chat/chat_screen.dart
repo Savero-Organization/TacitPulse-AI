@@ -14,10 +14,7 @@ class ChatScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (ctx) => ChatCubit(),
-      child: const _ChatView(),
-    );
+    return BlocProvider(create: (ctx) => ChatCubit(), child: const _ChatView());
   }
 }
 
@@ -30,6 +27,16 @@ class _ChatView extends StatefulWidget {
 
 class _ChatViewState extends State<_ChatView> {
   final TextEditingController _controller = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Inisialisasi native (back end llama.cpp + load model GGUF) sekali,
+    // async. Kalau model belum ada, cubit jatuh ke simulasi mock.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<ChatCubit>().init();
+    });
+  }
 
   @override
   void dispose() {
@@ -49,7 +56,9 @@ class _ChatViewState extends State<_ChatView> {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
-          content: Text('Simulasi upload dokumen → SQLite Knowledge Store (FFI backend)'),
+          content: Text(
+            'Simulasi upload dokumen → SQLite Knowledge Store (FFI backend)',
+          ),
           duration: Duration(seconds: 2),
         ),
       );
@@ -69,10 +78,18 @@ class _ChatViewState extends State<_ChatView> {
                 padding: const EdgeInsets.only(right: 16),
                 child: Row(
                   children: [
-                    PulseDot(color: online ? AppColors.success : AppColors.warning),
+                    PulseDot(
+                      color: online ? AppColors.success : AppColors.warning,
+                    ),
                     const SizedBox(width: 6),
-                    const Text('Qwen 3.5-0.8B',
-                        style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontFamily: 'monospace')),
+                    const Text(
+                      'Qwen 3.5-0.8B',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
                   ],
                 ),
               );
@@ -93,7 +110,8 @@ class _ChatViewState extends State<_ChatView> {
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   controller: ScrollController(),
                   itemCount: state.messages.length,
-                  itemBuilder: (context, i) => MessageBubble(message: state.messages[i]),
+                  itemBuilder: (context, i) =>
+                      MessageBubble(message: state.messages[i]),
                 ),
               ),
               _Composer(
@@ -102,8 +120,10 @@ class _ChatViewState extends State<_ChatView> {
                 isStreaming: state.status == ChatStatus.streaming,
                 onAttach: () => _attach(context),
                 onSend: () => _send(context),
-                onVoiceStart: () => context.read<ChatCubit>().startVoiceRecording(),
-                onVoiceStop: () => context.read<ChatCubit>().stopVoiceRecording(),
+                onVoiceStart: () =>
+                    context.read<ChatCubit>().startVoiceRecording(),
+                onVoiceStop: () =>
+                    context.read<ChatCubit>().stopVoiceRecording(),
               ),
               const SizedBox(height: 6),
             ],
@@ -127,8 +147,10 @@ class _RecordingBanner extends StatelessWidget {
         children: [
           PulseDot(color: AppColors.danger),
           SizedBox(width: 8),
-          Text('Merekam suara teknisi · whisper.cpp on-device',
-              style: TextStyle(color: AppColors.textPrimary, fontSize: 12)),
+          Text(
+            'Merekam suara teknisi · whisper.cpp on-device',
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -148,8 +170,10 @@ class _StreamingBanner extends StatelessWidget {
         children: [
           PulseDot(color: AppColors.cyanAccent),
           SizedBox(width: 8),
-          Text('Streaming token · llama.cpp (Qwen 3.5-0.8B Q4_K_M)',
-              style: TextStyle(color: AppColors.textPrimary, fontSize: 12)),
+          Text(
+            'Streaming token · llama.cpp (Qwen 3.5-0.8B Q4_K_M)',
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -189,7 +213,10 @@ class _Composer extends StatelessWidget {
           IconButton(
             onPressed: onAttach,
             tooltip: 'Lampirkan dokumen (PDF) ke Knowledge Store',
-            icon: const Icon(Icons.attach_file_rounded, color: AppColors.textSecondary),
+            icon: const Icon(
+              Icons.attach_file_rounded,
+              color: AppColors.textSecondary,
+            ),
           ),
           const SizedBox(width: 2),
           Expanded(
@@ -200,8 +227,13 @@ class _Composer extends StatelessWidget {
               textInputAction: TextInputAction.send,
               onSubmitted: (_) => onSend(),
               decoration: InputDecoration(
-                hintText: isRecording ? 'Merekam… ketuk lagi untuk berhenti' : 'Ask TacitPulse AI…',
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                hintText: isRecording
+                    ? 'Merekam… ketuk lagi untuk berhenti'
+                    : 'Ask TacitPulse AI…',
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 suffixIcon: ChatMicButton(
                   isRecording: isRecording,
                   enabled: !isStreaming,
@@ -217,7 +249,9 @@ class _Composer extends StatelessWidget {
             tooltip: 'Kirim',
             icon: Icon(
               Icons.send_rounded,
-              color: isStreaming ? AppColors.textSecondary : AppColors.industrialAmber,
+              color: isStreaming
+                  ? AppColors.textSecondary
+                  : AppColors.industrialAmber,
             ),
           ),
         ],

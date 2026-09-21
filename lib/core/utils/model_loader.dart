@@ -54,12 +54,14 @@ class ModelManager {
     final dest = File('${dir.path}/$fileName');
 
     final sourceLen = await source.length();
-    await source.copy(dest.path);
-    final destLen = await dest.length();
-    if (destLen != sourceLen) {
-      await dest.delete();
+    final tempPath = '${dest.path}.tmp';
+    await source.copy(tempPath);
+    final tempLen = await File(tempPath).length();
+    if (tempLen != sourceLen) {
+      await File(tempPath).delete();
       return null;
     }
+    await File(tempPath).rename(dest.path);
     return dest.path;
   }
 

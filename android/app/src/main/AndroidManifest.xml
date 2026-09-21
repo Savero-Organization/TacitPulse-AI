@@ -42,9 +42,10 @@
             <data android:mimeType="text/plain"/>
         </intent>
     </queries>
-    <!-- Development fallback: akses /sdcard/Download untuk salin model
-         via ModelManager.copyFromDownloads. Scoped storage (API 33+)
-         tidak membutuhkan permission ini. -->
+    <!-- Required on Android 12- (API <= 32) to read from the shared
+         Downloads directory when copying models via
+         ModelManager.copyFromDownloads. Not needed on Android 13+
+         (scoped storage). -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />

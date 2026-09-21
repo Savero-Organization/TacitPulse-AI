@@ -154,7 +154,12 @@ class LLMInference {
     }
   }
 
-  /// Generasi satu jawaban lengkap (non-stream). Null kalau gagal.
+  /// Generasi satu jawaban lengkap (non-stream).
+  ///
+  /// Returns null HANYA kalau model belum siap / worker belum ada (sama
+  /// seperti generateStream yang tidak meng-emit apa-apa). Kalau native
+  /// gagal di tengah jalan, melempar [LLMInferenceException] — konsisten
+  /// dengan [generateStream].
   Future<String?> generate(
     String prompt, {
     int maxTokens = 512,
@@ -180,13 +185,16 @@ class LLMInference {
           final message =
               item['message'] as String? ?? 'gagal generasi (tanpa pesan)';
           log('[LLMInference] generate error: $message');
-          return null;
+          throw LLMInferenceException(message);
         }
       }
     } finally {
       reply.close();
     }
-    return null;
+    // Worker berhenti membalas tanpa result/error.
+    throw LLMInferenceException(
+      'generate selesai tanpa result atau error dari worker',
+    );
   }
 
   /// Menutup worker: native membebaskan model + backend lalu isolate keluar.

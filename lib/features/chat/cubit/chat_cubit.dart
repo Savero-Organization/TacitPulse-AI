@@ -151,9 +151,11 @@ class ChatCubit extends Cubit<ChatState> {
     }
     final msgs = state.messages.map((m) {
       if (m.id != assistantId) return m;
+      // Detail error native tidak ditampilkan ke pengguna (bisa berisi path
+      // file / internal llama.cpp) — cukup log; UI kasih pesan generik.
       final note = error == null
           ? ''
-          : '\n\n⚠️ Gagal memproses: $error';
+          : '\n\n⚠️ Gagal memproses. Periksa log untuk detail.';
       return m.copyWith(
         isStreaming: false,
         text: m.text + note,

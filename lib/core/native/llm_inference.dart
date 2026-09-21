@@ -367,6 +367,11 @@ String? _nativeError(TacitLlamaBindings bindings) {
 /// (llama_token_to_piece) — ini jaring pengaman kalau versi/konfigurasi
 /// berubah; toDartString() bawaan ffi malah melempar FormatException.
 String _utf8String(Pointer<Char> ptr) {
+  if (ptr == nullptr) return '';
+  // utf8Ptr.length sudah melakukan null-terminator scan (package:ffi
+  // meng-loop while (bytes[i] != 0)) — batas baca selalu akurat, jadi
+  // tidak perlu scan manual. Guard di atas hanya membuat helper ini aman
+  // dipanggil sendirian (length melempar StateError kalau pointer null).
   final utf8Ptr = ptr.cast<Utf8>();
   final bytes = utf8Ptr.cast<Uint8>().asTypedList(utf8Ptr.length);
   return utf8.decode(bytes, allowMalformed: true);

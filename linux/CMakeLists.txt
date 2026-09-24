@@ -2,6 +2,11 @@
 cmake_minimum_required(VERSION 3.13)
 project(runner LANGUAGES CXX)
 
+# Some bundled native pieces (e.g. sqlite-vec's vec0 extension) are C-only
+# top-level targets; enable the C language explicitly here instead of relying
+# on subprojects (llama/ggml) to enable it.
+enable_language(C)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "tacit_pulse_ai")
@@ -130,6 +135,26 @@ set_target_properties(tacit_llama PROPERTIES
 )
 
 install(TARGETS tacit_llama LIBRARY DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+
+# === Native sqlite-vec extension (vec0) ===
+# Vendored alongside the Android build (see android/app/src/main/cpp/vec0/
+# for provenance). Bundled under lib/ so Dart FFI resolves libvec0.so next
+# to the executable and registers it with package:sqlite3.
+set(VEC0_DIR "${TACIT_CPP_DIR}/vec0")
+
+add_library(vec0 SHARED
+    ${VEC0_DIR}/sqlite-vec.c
+)
+
+set_target_properties(vec0 PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  INSTALL_RPATH "$ORIGIN/lib"
+)
+
+target_compile_definitions(vec0 PRIVATE DART_SHARED_LIB)
+
+install(TARGETS vec0 LIBRARY DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"

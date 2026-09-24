@@ -34,3 +34,16 @@ target_link_libraries(tacit_llama
     ggml
     log
 )
+
+# sqlite-vec: ekstensi SQLite untuk vector similarity search (vec0).
+# Sumber amalgamasi di-vendor di vec0/ (sqlite-vec v0.1.10-alpha.4,
+# commit 04d28bd, plus sqlite3ext.h dari SQLite 3.52.0). Dibuild sebagai
+# shared library loadable extension; di-daftarkan dari Dart lewat
+# sqlite3.ensureExtensionLoaded(SqliteExtension.inLibrary(libvec0.so, ...)).
+add_library(vec0 SHARED
+    vec0/sqlite-vec.c
+)
+set_target_properties(vec0 PROPERTIES
+    OUTPUT_NAME "vec0"
+)
+target_compile_definitions(vec0 PRIVATE DART_SHARED_LIB)

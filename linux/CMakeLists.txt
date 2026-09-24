@@ -91,6 +91,47 @@ install(CODE "
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 
+# === Native LLM bridge (tacit_llama over llama.cpp) ===
+# Reuses the C-API bridge sources shared with Android and bundles the
+# resulting shared library under lib/ (next to the binary) so Dart FFI can
+# resolve libtacit_llama.so relative to the executable.
+set(TACIT_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../android/app/src/main/cpp")
+set(LLAMA_DIR "${TACIT_CPP_DIR}/llama.cpp")
+
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+
+# Link llama/ggml statically so libtacit_llama.so is self-contained
+# (avoids shipping several extra .so files and the SONAME dance).
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_INSTALL OFF CACHE BOOL "" FORCE)
+
+# Static archives need -fPIC to link into the shared libtacit_llama.so.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_subdirectory(${LLAMA_DIR} llama_build)
+set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
+
+add_library(tacit_llama SHARED
+    ${TACIT_CPP_DIR}/tacit_llama.cpp
+)
+target_include_directories(tacit_llama PRIVATE
+    ${TACIT_CPP_DIR}
+    ${LLAMA_DIR}/include
+    ${LLAMA_DIR}/ggml/include
+    ${LLAMA_DIR}/src
+)
+target_link_libraries(tacit_llama PRIVATE llama ggml)
+
+set_target_properties(tacit_llama PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  INSTALL_RPATH "$ORIGIN/lib"
+)
+
+install(TARGETS tacit_llama LIBRARY DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 

@@ -17,18 +17,109 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
+import 'package:path/path.dart' as p;
 
+import '../utils/gguf_validator.dart';
 import '../utils/model_loader.dart';
+import '../utils/thinking_utils.dart' show stripSpecialTokens;
 import 'tacit_llama_bindings.g.dart';
 
-/// Nama library native yang dihasilkan CMake Android (libtacit_llama.so).
-const String _kLibName = 'libtacit_llama.so';
+/// Cross-platform DynamicLibrary loader untuk tacit_llama native library.
+///
+/// Di Linux: coba SONAME selama proses (ternavigasi via RPATH bundel) dulu;
+/// kalau gagal, jatuh ke pencarian relatif-executable — `lib/` bundel dan
+/// direktori yang sama dengan binary — agar `flutter run -d linux` maupun
+/// instalasi manual tetap menemukan `libtacit_llama.so`.
+DynamicLibrary openTacitLlamaLibrary() {
+  if (Platform.isAndroid) {
+    return DynamicLibrary.open('libtacit_llama.so');
+  } else if (Platform.isLinux) {
+    try {
+      return DynamicLibrary.open('libtacit_llama.so');
+    } catch (_) {
+      final exeDir = p.dirname(Platform.resolvedExecutable);
+      final bundleLib = p.join(exeDir, 'lib', 'libtacit_llama.so');
+      if (File(bundleLib).existsSync()) {
+        return DynamicLibrary.open(bundleLib);
+      }
+      final sameDirLib = p.join(exeDir, 'libtacit_llama.so');
+      if (File(sameDirLib).existsSync()) {
+        return DynamicLibrary.open(sameDirLib);
+      }
+      rethrow;
+    }
+  } else if (Platform.isWindows) {
+    return DynamicLibrary.open('tacit_llama.dll');
+  } else if (Platform.isIOS || Platform.isMacOS) {
+    return DynamicLibrary.process();
+  }
+  throw UnsupportedError('Platform ${Platform.operatingSystem} is not supported.');
+}
 
 /// Prompt sistem default berbahasa Indonesia untuk asisten teknisi.
 const String _kDefaultSystemPrompt =
     'Kamu adalah asisten teknisi maintenance pabrik. Jawab singkat, padat, '
     'dan langsung praktis. Jika menjawab dari SOP atau log mesin, sebutkan '
     'sumbernya. Jangan menebak fakta yang tidak ada di sumber.';
+
+/// Stop-sequence bawaan (token kontrol Qwen/llama.cpp) yang menghentikan
+/// generasi dan disanitasi dari output TACIT TADIR.
+///
+/// Dipakai dua lapis: worker native mendeteksi token ini pada aliran piece
+/// (callback mengembalikan nonzero -> native berhenti bersih, rc kembali 0),
+/// dan lapisan Dart memotong/membuang sisa token yang lolos dari teks.
+const List<String> kDefaultStopTokens = [
+  '<|im_end|>',
+  '<|im_start|>',
+  '<|im_end_of_text|>',
+  '<|endoftext|>',
+  '</s>',
+];
+
+/// Awalan stop-sequence ChatML yang dibolehkan belum tertutup `>` (token
+/// parsial). Dipakai supaya generasi/deteksi berhenti begitu token kontrol
+/// MULAI muncul (`<|im_end`, `<|im_start`, `<|im_end_of_text`, `<|endoftext`),
+/// bukan menunggu versi utuh yang bisa terpotong di ujung aliran.
+const List<String> kStopTokenPrefixes = [
+  '<|im_end',
+  '<|im_start',
+  '<|im_end_of_text',
+  '<|endoftext',
+];
+
+/// Daftar stop-sequence efektif: versi utuh [kDefaultStopTokens] digabung
+/// dengan awalan parsial [kStopTokenPrefixes] (unik).
+List<String> effectiveStopTokens([List<String> stops = kDefaultStopTokens]) {
+  return List<String>.unmodifiable({...stops, ...kStopTokenPrefixes});
+}
+
+/// Panjang token terpanjang di [effectiveStopTokens] (`<|endoftext|>` = 13).
+/// Dipakai sebagai ukuran buffer "tail" agar stop-sequence yang terpotong di
+/// antara dua piece generasi tetap terdeteksi saat piece berikutnya tiba.
+const int kMaxStopTokenLen = 13;
+
+/// Index kemunculan pertama dari stop-sequence mana pun dalam [text],
+/// atau `-1` apabila tidak ada.
+int firstStopTokenIndex(String text, List<String> stops) {
+  final maxLen = text.length;
+  if (maxLen == 0) return -1;
+  for (var i = 0; i < maxLen; i++) {
+    for (final s in stops) {
+      if (i + s.length <= maxLen && text.startsWith(s, i)) return i;
+    }
+  }
+  return -1;
+}
+
+/// Memotong [text] tepat sebelum stop-sequence/awalan parsial pertama
+/// (bila ditemukan) — termasuk token parsial seperti `<|im_end`.
+String truncateAtStopTokens(
+  String text, {
+  List<String> stops = kDefaultStopTokens,
+}) {
+  final i = firstStopTokenIndex(text, effectiveStopTokens(stops));
+  return i < 0 ? text : text.substring(0, i);
+}
 
 /// Error generasi yang membawa pesan diagnostik dari native.
 class LLMInferenceException implements Exception {
@@ -70,18 +161,45 @@ class LLMInference {
   /// Jalur lengkap model yang dipakai.
   String? get modelPath => _modelPath;
 
+  /// Menghentikan generasi yang sedang berjalan.
+  void stopGeneration() {
+    if (_requests != null) {
+      _requests!.send({'cmd': 'abort'});
+    }
+  }
+
+  /// Reset KV cache (clear context) untuk memulai percakapan baru.
+  Future<void> resetContext() async {
+    if (!_ready || _requests == null) return;
+    final reply = ReceivePort();
+    _requests!.send({'cmd': 'reset', 'reply': reply.sendPort});
+    await reply.first;
+    reply.close();
+  }
+
   /// Memulai worker isolate + membuka library + init backend + load model.
-  /// Aman dipanggil berulang; hanya sekali dieksekusi.
+  /// Aman dipanggil berulang; hanya sekali dieksekusi bila _worker sudah ada.
+  ///
+  /// Tidak pernah melempar saat model belum ada: resolusi path berlapis tidak
+  /// menemukan model → return `false`, dan caller bisa menampilkan model
+  /// picker / downloader sheet (bukan crash / error resolusi model).
   Future<bool> initialize({String? modelFile}) async {
     if (_worker != null) return _ready;
 
-    final path = await ModelLoader.getModelPath(modelFile ?? defaultModelFile);
+    final path =
+        await ModelManager.resolveModelPath(modelFile ?? defaultModelFile);
+    if (path == null) {
+      _startupError =
+          'Model (${modelFile ?? defaultModelFile}) belum tersedia di device. '
+          'Pilih file .gguf (${GgufValidator.targetModelLabel}) dari penyimpanan '
+          'atau sinkronkan via mesh.';
+      return false;
+    }
+
     _modelPath = path;
     _modelFileExists = await File(path).exists();
     if (!_modelFileExists) {
-      _startupError =
-          'Model belum ada: $path\n'
-          'Letakkan file .gguf di folder "models" di dokumen aplikasi.';
+      _startupError = 'Model belum ada: $path';
       return false;
     }
 
@@ -114,20 +232,29 @@ class LLMInference {
   /// Prompt otomatis dibungkus template chat Qwen. Kalau [isReady] false
   /// (model belum siap) stream langsung selesai — caller boleh memakai mock
   /// sebagai fallback.
+  ///
+  /// [contextDocs]: blok referensi RAG (hasil [IntentRouter]) yang diinjeksikan
+  /// ke prompt sistem; kosong bila tidak ada context.
   Stream<String> generateStream(
     String prompt, {
     int maxTokens = 512,
     double temperature = 0.7,
     String? systemPrompt,
+    String? contextDocs = '',
   }) async* {
     if (!_ready || _requests == null) return;
 
     final reply = ReceivePort();
     _requests!.send({
       'cmd': 'generate_stream',
-      'prompt': _buildChatPrompt(systemPrompt ?? _kDefaultSystemPrompt, prompt),
+      'prompt': _buildChatPrompt(
+        systemPrompt ?? _kDefaultSystemPrompt,
+        prompt,
+        contextDocs: contextDocs,
+      ),
       'maxTokens': maxTokens,
       'temperature': temperature,
+      'stops': kDefaultStopTokens,
       'reply': reply.sendPort,
     });
 
@@ -137,7 +264,12 @@ class LLMInference {
         final type = item['type'];
         if (type == 'piece') {
           final text = item['text'] as String?;
-          if (text != null && text.isNotEmpty) yield text;
+          if (text == null) continue;
+          // Jaring pengaman kedua: buang special token yang masih tersisa
+          // (tanpa trim — menghilangkan spasi per-piece merusak penggabungan
+          // kalimat di ChatCubit).
+          final cleaned = stripSpecialTokens(text);
+          if (cleaned.isNotEmpty) yield cleaned;
         } else if (type == 'done') {
           break;
         } else if (type == 'error') {
@@ -165,15 +297,21 @@ class LLMInference {
     int maxTokens = 512,
     double temperature = 0.7,
     String? systemPrompt,
+    String? contextDocs = '',
   }) async {
     if (!_ready || _requests == null) return null;
 
     final reply = ReceivePort();
     _requests!.send({
       'cmd': 'generate',
-      'prompt': _buildChatPrompt(systemPrompt ?? _kDefaultSystemPrompt, prompt),
+      'prompt': _buildChatPrompt(
+        systemPrompt ?? _kDefaultSystemPrompt,
+        prompt,
+        contextDocs: contextDocs,
+      ),
       'maxTokens': maxTokens,
       'temperature': temperature,
+      'stops': kDefaultStopTokens,
       'reply': reply.sendPort,
     });
 
@@ -199,18 +337,27 @@ class LLMInference {
 
   /// Menutup worker: native membebaskan model + backend lalu isolate keluar.
   Future<void> dispose() async {
+  if (_worker != null) {
     _requests?.send({'cmd': 'shutdown'});
+    // Berikan jeda untuk gracefully shutdown native C++ memory
+    await Future.delayed(const Duration(milliseconds: 100));
+    _worker?.kill(priority: Isolate.immediate);
     _worker = null;
-    _requests = null;
-    _control?.close();
-    _control = null;
-    _ready = false;
-    _modelPath = null;
   }
+  _requests = null;
+  _control?.close();
+  _control = null;
+  _ready = false;
+}
 
   /// Prompt chat Qwen 3.x: format im_start / im_end.
-  String _buildChatPrompt(String system, String user) {
-    return '<|im_start|>system\n$system<|im_end|>\n'
+  /// [contextDocs] (hasil routing RAG) disisipkan sebagai blok referensi
+  /// di prompt sistem — kosong bila tidak ada context.
+  String _buildChatPrompt(String system, String user, {String? contextDocs}) {
+    final context = contextDocs == null || contextDocs.isEmpty
+        ? ''
+        : '\n\nReferensi dokumen (gunakan bila relevan):\n$contextDocs';
+    return '<|im_start|>system\n$system$context<|im_end|>\n'
         '<|im_start|>user\n$user<|im_end|>\n'
         '<|im_start|>assistant\n';
   }
@@ -226,12 +373,12 @@ void _workerMain(List<Object?> args) {
 
   TacitLlamaBindings bindings;
   try {
-    bindings = TacitLlamaBindings(DynamicLibrary.open(_kLibName));
+    bindings = TacitLlamaBindings(openTacitLlamaLibrary());
   } catch (e) {
     mainPort.send({
       'type': 'init',
       'ok': false,
-      'error': 'Gagal membuka $_kLibName: $e',
+      'error': 'Gagal membuka library native: $e',
     });
     return;
   }
@@ -245,6 +392,8 @@ void _workerMain(List<Object?> args) {
     return;
   }
 
+  bool isAborted = false;
+
   final requests = ReceivePort();
   mainPort.send({'type': 'init', 'ok': true, 'port': requests.sendPort});
 
@@ -252,9 +401,17 @@ void _workerMain(List<Object?> args) {
     if (msg is! Map) return;
     switch (msg['cmd']) {
       case 'generate_stream':
-        _workerGenerateStream(bindings, model, msg);
+        isAborted = false;
+        _workerGenerateStream(bindings, model, msg, () => isAborted);
       case 'generate':
+        isAborted = false;
         _workerGenerate(bindings, model, msg);
+      case 'abort':
+        isAborted = true;
+      case 'reset':
+        final reply = msg['reply'] as SendPort?;
+        bindings.tacit_reset(model);
+        reply?.send({'type': 'reset_done'});
       case 'shutdown':
         bindings.tacit_model_free(model);
         bindings.tacit_free_backend();
@@ -276,28 +433,63 @@ void _workerGenerateStream(
   TacitLlamaBindings bindings,
   Pointer<tacit_model> model,
   Map<Object?, Object?> msg,
+  bool Function() isAborted,
 ) {
   final reply = msg['reply'] as SendPort;
   final prompt = msg['prompt'] as String;
   final maxTokens = (msg['maxTokens'] as num?)?.toInt() ?? 512;
   final temperature = ((msg['temperature'] as num?) ?? 0.7).toDouble();
+  final stops = effectiveStopTokens(
+    (msg['stops'] as List?)?.cast<String>() ?? kDefaultStopTokens,
+  );
 
   final promptPtr = prompt.toNativeUtf8();
   NativeCallable<TokenCallbackFunction>? callable;
+
+  // Buffer ujung-ujung terakhir aliran agar stop-sequence yang terpotong di
+  // antara dua piece (token generasi terbagi) tetap terdeteksi dari sini.
+  String stopTail = '';
+  final int keepTailLen = kMaxStopTokenLen - 1;
+
   try {
-    // isolateLocal: callback harus dipanggil dari thread yang sama dengan
-    // native call — persis skenario kita (blocking call di isolate ini).
-    // Return non-zero dari callback = minta native menghentikan generasi.
+    // Tugaskan ke variabel 'callable' di luar (tanpa kata kunci 'final')
     callable = NativeCallable<TokenCallbackFunction>.isolateLocal((
       Pointer<Char> piece,
       Pointer<Void> _,
     ) {
+      if (isAborted()) {
+        return 1; // Signal native to stop generation
+      }
       try {
-        reply.send({
-          'type': 'piece',
-          'text': _utf8String(piece),
-        });
-        return 0;
+        final pieceText = _utf8String(piece);
+        if (pieceText.isEmpty) return 0;
+
+        // Deteksi stop-sequence pada tail terakhir + piece saat ini.
+        final candidate = stopTail + pieceText;
+        final hitIndex = firstStopTokenIndex(candidate, stops);
+        if (hitIndex < 0) {
+          reply.send({
+            'type': 'piece',
+            'text': stripSpecialTokens(pieceText),
+          });
+          stopTail = candidate.length > keepTailLen
+              ? candidate.substring(candidate.length - keepTailLen)
+              : candidate;
+          return 0;
+        }
+
+        // Stop-sequence tertangkap: kirim string sebelum token (bila ada),
+        // lalu abort native -> generate_int berhenti bersih (rc kembali 0).
+        final cutInPiece = hitIndex - stopTail.length;
+        if (cutInPiece > 0) {
+          final prefix = stripSpecialTokens(
+            pieceText.substring(0, cutInPiece),
+          );
+          if (prefix.isNotEmpty) {
+            reply.send({'type': 'piece', 'text': prefix});
+          }
+        }
+        return 1;
       } catch (_) {
         return 1; // gagal kirim ke Dart -> abort
       }
@@ -311,6 +503,7 @@ void _workerGenerateStream(
       callable.nativeFunction,
       nullptr,
     );
+
     if (rc != 0) {
       reply.send({
         'type': 'error',
@@ -322,8 +515,13 @@ void _workerGenerateStream(
   } catch (e) {
     reply.send({'type': 'error', 'message': '$e'});
   } finally {
+    // Ditutup HANYA SETELAH fungsi native C++ tacit_generate_stream selesai mengeksekusi seluruh loop
     callable?.close();
     malloc.free(promptPtr);
+    // KV cache tidak dipertahankan antar turn: setiap generasi mem-prompt
+    // ulang riwayat penuh, jadi cache yang lama hanya menahan RAM + posisi
+    // basi. Kosongkan (data wipe) begitu generasi selesai.
+    bindings.tacit_reset(model);
   }
 }
 
@@ -336,6 +534,9 @@ void _workerGenerate(
   final prompt = msg['prompt'] as String;
   final maxTokens = (msg['maxTokens'] as num?)?.toInt() ?? 512;
   final temperature = ((msg['temperature'] as num?) ?? 0.7).toDouble();
+  final stops = effectiveStopTokens(
+    (msg['stops'] as List?)?.cast<String>() ?? kDefaultStopTokens,
+  );
 
   final promptPtr = prompt.toNativeUtf8();
   try {
@@ -351,14 +552,19 @@ void _workerGenerate(
         'message': _nativeError(bindings) ?? 'tacit_generate gagal',
       });
     } else {
-      final text = _utf8String(out);
+      final raw = _utf8String(out);
       bindings.tacit_free_string(out);
+      // Potong di stop-sequence pertama lalu buang special token yang tersisa.
+      final text = stripSpecialTokens(truncateAtStopTokens(raw, stops: stops));
       reply.send({'type': 'result', 'text': text});
     }
   } catch (e) {
     reply.send({'type': 'error', 'message': '$e'});
   } finally {
     malloc.free(promptPtr);
+    // Sama seperti generate_stream: kosongkan KV cache setelah sekali jalan
+    // supaya idle tidak menahan memori cache yang tidak terpakai.
+    bindings.tacit_reset(model);
   }
 }
 

@@ -1,5 +1,21 @@
 {
   "cmake.sourceDirectory": "/home/savero/AI/tacit_pulse_ai/android/app/src/main/cpp",
   "java.configuration.updateBuildConfiguration": "interactive",
-  "dart.flutterSdkPath": ".fvm/versions/3.47.4"
+  "dart.flutterSdkPath": ".fvm/versions/3.47.4",
+  "java.import.exclusions": [
+    "**/node_modules/**",
+    "**/.metadata/**",
+    "**/ephemeral/**",
+    "**/.plugin_symlinks/**",
+    "**/.pub-cache/**",
+    "**/cpp/llama.cpp/examples/**"
+  ],
+  "gradle.autoDetect": "off",
+  "gradle.nestedProjects": false,
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/build/**": true,
+    "**/.plugin_symlinks/**": true
+  }
 }

@@ -12,6 +12,7 @@ class ChatMessage {
     this.isStreaming = false,
     this.isVoice = false,
     this.draftSopId,
+    this.thinkingSeconds = 0,
   });
 
   final String id;
@@ -23,10 +24,15 @@ class ChatMessage {
   final bool isVoice;
   final String? draftSopId;
 
+  /// Durasi (detik) blok berpikir paling baru pada pesan ini.
+  /// 0 = tidak ada blok berpikir / belum dicatat.
+  final int thinkingSeconds;
+
   ChatMessage copyWith({
     String? text,
     List<SourceCitation>? citations,
     bool? isStreaming,
+    int? thinkingSeconds,
   }) {
     return ChatMessage(
       id: id,
@@ -37,6 +43,7 @@ class ChatMessage {
       isStreaming: isStreaming ?? this.isStreaming,
       isVoice: isVoice,
       draftSopId: draftSopId,
+      thinkingSeconds: thinkingSeconds ?? this.thinkingSeconds,
     );
   }
 }

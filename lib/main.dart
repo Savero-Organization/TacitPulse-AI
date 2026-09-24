@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/downloads/model_download_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/onboarding_screen.dart';
 import 'features/shell/app_shell.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Unduhan model tetap "hidup" lintas-layout: pause/resume otomatis saat
+  // app disuspend (mobile) + pulihkan unduhan yang terhenti oleh kill app.
+  final lifecycle = ModelDownloadLifecycleObserver(
+    ModelDownloadService.instance,
+  );
+  WidgetsBinding.instance.addObserver(lifecycle);
+  ModelDownloadService.instance.restorePending();
   runApp(const TacitPulseApp());
 }
 

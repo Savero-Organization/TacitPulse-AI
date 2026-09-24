@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/models/mesh_node.dart';
 import '../../../core/models/worker_profile.dart';
+import '../../../core/utils/model_loader.dart';
 import '../../mock_data.dart';
 
 class MeshMonitorState {
@@ -17,6 +18,7 @@ class MeshMonitorState {
     this.isLocalFullNode = true,
     this.uptimeTicks = 0,
     this.localDeviceId = 'TEK-LOKAL-01',
+    this.modelHosted = false,
   });
 
   final List<MeshNode> nodes;
@@ -27,12 +29,19 @@ class MeshMonitorState {
   final int uptimeTicks;
   final String localDeviceId;
 
+  /// Benar bila node lokal memegang file model GGUF target yang tervalidasi
+  /// (hasil [ModelManager.resolveModelPath] != null). Hanya saat bernilai
+  /// `true` node berhak menampilkan/menyiarkan status seed model via P2P
+  /// BitSwap. `false` → model dilaporkan unhosted / 0% / tidak aktif.
+  final bool modelHosted;
+
   MeshMonitorState copyWith({
     List<MeshNode>? nodes,
     LocalStorageStatus? storage,
     MeshMeshStats? meshStats,
     WorkerProfile? profile,
     int? uptimeTicks,
+    bool? modelHosted,
   }) {
     return MeshMonitorState(
       nodes: nodes ?? this.nodes,
@@ -42,6 +51,7 @@ class MeshMonitorState {
       isLocalFullNode: profile?.isFullNode ?? isLocalFullNode,
       uptimeTicks: uptimeTicks ?? this.uptimeTicks,
       localDeviceId: profile?.nodeName ?? localDeviceId,
+      modelHosted: modelHosted ?? this.modelHosted,
     );
   }
 }
@@ -54,6 +64,7 @@ class MeshMonitorCubit extends Cubit<MeshMonitorState> {
           meshStats: MockData.buildMeshStats,
         )) {
     _loadProfile();
+    refreshModelStatus();
   }
 
   final math.Random _rnd = math.Random(7);
@@ -65,6 +76,23 @@ class MeshMonitorCubit extends Cubit<MeshMonitorState> {
     if (json == null || isClosed) return;
     final profile = WorkerProfile.fromJson(json);
     emit(state.copyWith(profile: profile, nodes: MockData.buildNearbyTechs(profile.nodeName)));
+  }
+
+  /// Cek lokal: apakah node benar-benar memegang model GGUF yang valid
+  /// untuk di-host? Memakai [ModelManager.resolveModelPath] sehingga hasil
+  /// mencerminkan storage / custom path / mesh-cache asli — bukan asumsi.
+  ///
+  /// Tidak pernah melempar; apapun kegagalan (mis. platform channel tidak
+  /// tersedia saat test) → [MeshMonitorState.modelHosted] menjadi `false`.
+  Future<void> refreshModelStatus() async {
+    var hosted = false;
+    try {
+      hosted = await ModelManager.resolveModelPath() != null;
+    } catch (_) {
+      hosted = false;
+    }
+    if (isClosed || hosted == state.modelHosted) return;
+    emit(state.copyWith(modelHosted: hosted));
   }
 
   void start() {
@@ -102,6 +130,21 @@ class MeshMonitorCubit extends Cubit<MeshMonitorState> {
 
   void reloadProfile() {
     _loadProfile();
+    refreshModelStatus();
+  }
+
+  void setNodeRole({required bool isFullNode}) {
+    if (isClosed) return;
+    emit(MeshMonitorState(
+      nodes: state.nodes,
+      storage: state.storage,
+      meshStats: state.meshStats,
+      profile: state.profile,
+      isLocalFullNode: isFullNode,
+      uptimeTicks: state.uptimeTicks,
+      localDeviceId: state.localDeviceId,
+      modelHosted: state.modelHosted,
+    ));
   }
 
   @override

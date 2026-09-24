@@ -3,12 +3,14 @@
 
 #include "tacit_llama.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "llama.h"
@@ -61,7 +63,13 @@ tacit_model * model_load_internal(const char * model_path) {
         return nullptr;
     }
 
-    h->model = llama_model_load_from_file(model_path, llama_model_default_params());
+    // Offload all layers to GPU/iGPU VRAM (CUDA / ROCm / Vulkan) when the
+    // build has a compute device. With zero GPUs llama.cpp safely falls back
+    // to CPU — n_gpu_layers is just an upper bound, not a hard requirement.
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 99;
+
+    h->model = llama_model_load_from_file(model_path, mparams);
     if (h->model == nullptr) {
         set_error("failed to load GGUF model");
         delete h;
@@ -70,6 +78,15 @@ tacit_model * model_load_internal(const char * model_path) {
 
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = kDefaultNContext;
+
+    // CPU thread guard: cap at 4 threads with headroom for the OS/UI so CPU
+    // fallback never starves the system interface. At least 1 thread always.
+    const int sys_threads = static_cast<int>(std::thread::hardware_concurrency());
+    const int safe_threads = std::max(1, std::min(4, sys_threads - 2));
+    cparams.n_threads = safe_threads;
+    cparams.n_threads_batch = safe_threads;
+    LOGI("llama params: n_gpu_layers=%d, n_threads=%d (sys=%d)",
+         mparams.n_gpu_layers, safe_threads, sys_threads);
 
     h->ctx = llama_init_from_model(h->model, cparams);
     if (h->ctx == nullptr) {
@@ -294,7 +311,11 @@ int tacit_reset(tacit_model * model) {
         return -1;
     }
     std::lock_guard<std::mutex> lock(model->mtx);
-    llama_memory_clear(llama_get_memory(model->ctx), /*data=*/false);
+    // data=true: selain mereset metadata sel, isi buffer KV di-zero-kan.
+    // Dipanggil setelah tiap generasi selesai (lihat worker Dart) supaya
+    // idle tidak menahan sisa cache antar turn — setiap prompt ulang dari
+    // nol, sehingga KV yang lama memang sudah tidak terpakai.
+    llama_memory_clear(llama_get_memory(model->ctx), /*data=*/true);
     return 0;
 }
 

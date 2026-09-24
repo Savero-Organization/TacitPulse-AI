@@ -52,7 +52,9 @@ tacit_model * tacit_init_context(const char * model_path);
 /// Unloads the model and frees its context.
 void tacit_model_free(tacit_model * model);
 
-/// Clears the KV cache.
+/// Clears the KV cache and wipes the cache buffers.
+/// Used by the Dart worker after every generation (the app re-prompts full
+/// history each turn, so stale KV only wastes memory while idle).
 /// Returns 0 on success, -1 on failure.
 int tacit_reset(tacit_model * model);
 

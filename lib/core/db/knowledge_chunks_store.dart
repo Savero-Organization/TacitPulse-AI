@@ -16,14 +16,16 @@ const String kKnowledgeChunksTableName = 'knowledge_chunks';
 
 /// Skema tabel `knowledge_chunks` (virtual table `vec0` dari sqlite-vec).
 ///
-/// Kolom `embedding` adalah kolom vektor pencarian KNN (vec0). Kolom metadata
-/// diawali `+` (konvensi sqlite-vec) dan menyimpan atribut chunk sumber:
+/// Kolom `embedding` adalah kolom vektor pencarian KNN (vec0) dengan metrik
+/// `distance_metric=cosine`, sehingga kolom `distance` hasil query KNN berisi
+/// jarak cosine similarity (bukan L2). Kolom metadata diawali `+` (konvensi
+/// sqlite-vec) dan menyimpan atribut chunk sumber:
 /// `id` (ID), `document_name` (nama dokumen), `page` (nomor halaman),
 /// `chunk_text` (teks chunk), serta bounding box relatif `x`, `y`, `w`, `h`
 /// pada halaman dokumen (0..1).
 const String kKnowledgeChunksSchema = '''
 CREATE VIRTUAL TABLE IF NOT EXISTS $kKnowledgeChunksTableName USING vec0(
-  embedding float[$kEmbeddingDimensions],
+  embedding float[$kEmbeddingDimensions] distance_metric=cosine,
   +id TEXT,
   +document_name TEXT,
   +page INTEGER,

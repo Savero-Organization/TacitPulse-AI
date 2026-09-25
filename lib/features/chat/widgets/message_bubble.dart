@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/models/chat_message.dart';
+import '../../../core/models/citation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/thinking_utils.dart';
 import 'citation_card.dart';
@@ -10,9 +11,18 @@ import 'citation_card.dart';
 /// Bubble pesan chat: user (kanan, amber) & assistant (kiri, charcoal)
 /// lengkap dengan kartu Source Citation + indikator streaming token.
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.message});
+  const MessageBubble({super.key, required this.message, this.onCitationTap});
 
   final ChatMessage message;
+
+  /// Dipanggil saat kartu citation diketuk (diteruskan ke [CitationCard]).
+  final void Function(SourceCitation citation)? onCitationTap;
+
+  VoidCallback? _citationTap(SourceCitation citation) {
+    final onCitationTap = this.onCitationTap;
+    if (onCitationTap == null) return null;
+    return () => onCitationTap(citation);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +71,10 @@ class MessageBubble extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             for (var i = 0; i < message.citations.length; i++) ...[
-              CitationCard(citation: message.citations[i]),
+              CitationCard(
+                citation: message.citations[i],
+                onTap: _citationTap(message.citations[i]),
+              ),
               if (i < message.citations.length - 1) const SizedBox(height: 6),
             ],
           ],

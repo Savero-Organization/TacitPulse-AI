@@ -1,12 +1,9 @@
+import 'dart:io';
+
 import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
-
-/// Lokasi amalgamasi sqlite-vec yang di-vendor, relatif terhadap root paket
-/// ini. Sumber yang sama dipakai build CMake Android, Linux, dan Windows —
-/// hook ini hanya mengompilasi ulangnya untuk target Apple.
-const String _vec0SourcesDir = '../../android/app/src/main/cpp/vec0';
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
@@ -18,14 +15,31 @@ void main(List<String> args) async {
     final targetOS = input.config.code.targetOS;
     if (targetOS != OS.macOS && targetOS != OS.iOS) return;
 
+    // Amalgamasi sqlite-vec di-vendor sekali di paket app (source of
+    // truth yang sama untuk build CMake Android, Linux, dan Windows);
+    // hook ini hanya mengompilasi ulangnya untuk target Apple. Path
+    // dihitung dari input.packageRoot (anchor resmi hook runner, bukan
+    // cwd) lalu divalidasi dulu — bila struktur repo berubah, errornya
+    // jelas dan muncul di hook, bukan "file not found" dari compiler.
+    final packageRoot = input.packageRoot.toFilePath();
+    final vec0SourcesDir = '$packageRoot/../../android/app/src/main/cpp/vec0';
+    final sqliteVecSource = '$vec0SourcesDir/sqlite-vec.c';
+    if (!File(sqliteVecSource).existsSync()) {
+      throw StateError(
+        'Amalgamasi sqlite-vec tidak ditemukan: $sqliteVecSource — '
+        'struktur repo berubah? Perbarui path di '
+        'packages/vec0_native/hook/build.dart.',
+      );
+    }
+
     final cbuilder = CBuilder.library(
       name: input.packageName,
       assetName: 'vec0_native_bindings_generated.dart',
       sources: [
-        '$_vec0SourcesDir/sqlite-vec.c',
-        'src/vec0_entry.c',
+        sqliteVecSource,
+        '$packageRoot/src/vec0_entry.c',
       ],
-      includes: [_vec0SourcesDir],
+      includes: [vec0SourcesDir],
     );
     await cbuilder.run(
       input: input,

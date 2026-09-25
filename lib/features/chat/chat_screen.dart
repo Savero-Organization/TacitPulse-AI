@@ -5,13 +5,16 @@ import 'package:path/path.dart' as p;
 
 import '../../core/downloads/model_download_service.dart';
 import '../../core/rag/pdf_ingest_store.dart';
+import '../../core/models/citation.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/model_path_picker_sheet.dart';
 import '../../core/widgets/profile_app_bar_action.dart';
 import '../../core/widgets/responsive_shell.dart';
 import '../../core/widgets/widgets.dart';
 import 'cubit/chat_cubit.dart';
+import 'widgets/citation_pdf_path.dart';
 import 'widgets/message_bubble.dart';
+import 'widgets/pdf_viewer_screen.dart';
 import 'widgets/voice_record_button.dart';
 
 /// Knowledge Chat & Agentic RAG UI (Split-View Explorer Sidebar for Desktop).
@@ -75,6 +78,35 @@ class _ChatViewState extends State<_ChatView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<ChatCubit>().reloadModel();
     });
+  }
+
+  /// Buka PdfViewerScreen untuk citation: resolve path PDF via store
+  /// ingesti (kontrak gabut-23, lihat citation_pdf_path.dart). Bila file
+  /// tidak tersedia (mis. korpus mock tanpa file) → SnackBar, tanpa crash.
+  Future<void> _openCitation(SourceCitation citation) async {
+    final path = await resolveCitationPdfPath(citation);
+    if (!mounted) return;
+    if (path == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              'File sumber "${citation.title}" belum tersedia di perangkat.',
+            ),
+          ),
+        );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PdfViewerScreen(
+          filePath: path,
+          initialPage: citation.page,
+          highlightBox: citation.boundingBox,
+        ),
+      ),
+    );
   }
 
   void _send(BuildContext context) {
@@ -404,7 +436,10 @@ class _ChatViewState extends State<_ChatView> {
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             itemCount: state.messages.length,
-            itemBuilder: (context, i) => MessageBubble(message: state.messages[i]),
+            itemBuilder: (context, i) => MessageBubble(
+              message: state.messages[i],
+              onCitationTap: _openCitation,
+            ),
           ),
         ),
         _Composer(

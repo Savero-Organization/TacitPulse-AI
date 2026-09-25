@@ -115,6 +115,10 @@ class KnowledgeChunksDb {
   }
 
   /// Mengambil semua chunk, urut berdasarkan urutan insert (rowid).
+  ///
+  /// Peringatan: memuat seluruh tabel ke memori sekaligus. Untuk korpus
+  /// besar (mis. deployment client dengan banyak dokumen), pertimbangkan
+  /// pagination (limit/offset) sebelum dipakai di loop/UI.
   List<KnowledgeChunkRecord> list() {
     return _db
         .select('SELECT $_columns FROM $kKnowledgeChunksTableName '

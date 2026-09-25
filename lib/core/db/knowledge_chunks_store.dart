@@ -41,7 +41,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS $kKnowledgeChunksTableName USING vec0(
 ///
 /// Membuka (membuat bila belum ada) database di direktori dokumen aplikasi
 /// (atau [path] bila di-override untuk test), memasang ekstensi sqlite-vec,
-/// lalu mengeksekusi skema [kKnowledgeChunksSchema]. Mengembalikan handle
+/// lalu mengeksekusi skema [kKnowledgeChunksSchema] dan menyetel journal
+/// mode WAL. Mengembalikan handle
 /// [Database] yang siap dipakai; pemanggil bertanggung jawab menutupnya.
 /// Bila eksekusi skema gagal, handle ditutup otomatis dan exception
 /// diteruskan (tidak ada handle yang menggantung).
@@ -56,6 +57,10 @@ Future<Database> initializeKnowledgeChunksDatabase({String? path}) async {
   final db = openDatabaseWithVec(dbPath);
   try {
     db.execute(kKnowledgeChunksSchema);
+    // Mode WAL: siap bila kelak ada koneksi/reader kedua (unlock paralelisme
+    // reader-writer tanpa memblokir). Sekarang masih satu koneksi, jadi
+    // murni persiapan — `synchronous=FULL` default tidak ikut berubah.
+    db.execute('PRAGMA journal_mode=WAL');
     return db;
   } catch (_) {
     // Bila pembuatan skema gagal (mis. file korup), tutup handle agar fd

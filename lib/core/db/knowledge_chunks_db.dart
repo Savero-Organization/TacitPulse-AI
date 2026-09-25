@@ -211,8 +211,21 @@ class KnowledgeChunksDb {
     return Float32List.fromList(vector).buffer.asUint8List();
   }
 
-  /// Blob hasil `SELECT embedding` → `List<double>`.
+  /// Blob hasil `SELECT embedding` → `List<double>` ([kEmbeddingDimensions]
+  /// dimensi).
+  ///
+  /// Melempar [StateError] bila ukuran blob tidak persis
+  /// `kEmbeddingDimensions * 4` byte — tanda data korup, ada byte sisa
+  /// (padding), atau tabel dibuat dengan dimensi skema yang berbeda.
   static List<double> _decodeVector(Uint8List blob) {
+    if (blob.length != kEmbeddingDimensions * 4) {
+      throw StateError(
+        'Blob embedding tidak sesuai skema: ${blob.length} byte, '
+        'harus ${kEmbeddingDimensions * 4} byte '
+        '($kEmbeddingDimensions dimensi) — data korup atau tabel dibuat '
+        'dengan dimensi berbeda.',
+      );
+    }
     final data = ByteData.sublistView(Uint8List.fromList(blob));
     return Float32List.view(
       data.buffer,

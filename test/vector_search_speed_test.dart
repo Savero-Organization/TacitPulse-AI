@@ -117,7 +117,7 @@ void main() {
   );
 
   test(
-    'batas parameter k pada vec0 (k=1, k > korpus, k=0)',
+    'batas parameter k pada vec0 (k=1, k > korpus, k=0, k negatif)',
     skip: skipReason,
     () {
       final db = openDatabaseWithVec(':memory:', vecLibraryPath: vec0Path);
@@ -176,6 +176,17 @@ void main() {
 
       // k=0: kontrak vec0 yang sah — hasil kosong, bukan error.
       expect(store.search(query, k: 0), isEmpty);
+
+      // k negatif: divalidasi oleh vec0 sendiri di layer query (bukan
+      // guard Dart — sengaja tidak diduplikasi) dan gagal-loud dengan
+      // pesan jelas, bukan undefined behavior. Dipatok sebagai
+      // SqliteException agar perubahan kontrak ini terdeteksi bila
+      // amalgamasi sqlite-vec di-upgrade.
+      expect(
+        () => store.search(query, k: -1),
+        throwsA(isA<SqliteException>()),
+        reason: 'k negatif harus ditolak vec0, bukan menghasilkan data aneh.',
+      );
     },
   );
 

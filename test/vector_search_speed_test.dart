@@ -114,6 +114,69 @@ void main() {
       );
     },
   );
+
+  test(
+    'batas parameter k pada vec0 (k=1, k > korpus, k=0)',
+    skip: skipReason,
+    () {
+      final db = openDatabaseWithVec(':memory:', vecLibraryPath: vec0Path);
+      addTearDown(db.dispose);
+      db.execute(kKnowledgeChunksSchema);
+      final store = KnowledgeChunksDb(db);
+
+      final random = Random(7);
+      List<double> randomVector() => List<double>.generate(
+            kEmbeddingDimensions,
+            (_) => random.nextDouble() * 2 - 1,
+          );
+
+      const corpusSize = 25;
+      for (var i = 0; i < corpusSize; i++) {
+        store.insert(
+          KnowledgeChunkRecord(
+            id: 'edge-$i',
+            documentName: 'SOP EDGE',
+            page: 1,
+            chunkText: 'Chunk edge-case ke-$i',
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            embedding: randomVector(),
+          ),
+        );
+      }
+
+      final query = randomVector();
+
+      // k=1: harus mengembalikan tepat 1 hasil, dan hasilnya konsisten
+      // dengan tetangga terdekat dari pencarian ber-k lebih besar.
+      final top1 = store.search(query, k: 1);
+      expect(top1, hasLength(1), reason: 'k=1 harus mengembalikan 1 hasil.');
+      final top10 = store.search(query, k: 10);
+      expect(top10, hasLength(10));
+      expect(
+        top1.single.id,
+        top10.first.id,
+        reason: 'k=1 harus berupa tetangga terdekat (baris pertama k=10).',
+      );
+      expect(top1.single.distance, isNotNull);
+      expect(
+        top1.single.distance,
+        moreOrLessEquals(top10.first.distance!, epsilon: 1e-9),
+      );
+
+      // k melebihi jumlah baris: mengembalikan seluruh korpus tanpa error
+      // (bound dihormati sebagai min(k, jumlah_baris)).
+      expect(
+        store.search(query, k: corpusSize * 4),
+        hasLength(corpusSize),
+      );
+
+      // k=0: kontrak vec0 yang sah — hasil kosong, bukan error.
+      expect(store.search(query, k: 0), isEmpty);
+    },
+  );
 }
 
 /// Mencari libvec0.so: prioritas env `VEC0_LIB_PATH`, lalu output

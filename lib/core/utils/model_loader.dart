@@ -102,6 +102,30 @@ class ModelManager {
   /// Default fallback size ketika offline / ukuran remote tidak ter-resolve.
   static const double defaultModelSizeMb = 532.5;
 
+  // ---------------------------------------------------------------------------
+  // Embedding model (GABUT 30) — kontrak lintas-branch: nama & URL JANGAN
+  // diganti tanpa koordinasi (GABUT-23 pipeline & GABUT-25 viewer memakainya).
+  // ---------------------------------------------------------------------------
+
+  /// Nama file model embedding on-device (di `<dataRoot>/models/`).
+  ///
+  /// Sumber: `TwinSunsLLC/multilingual-e5-small-gguf` (intfloat/
+  /// multilingual-e5-small, GGUF Q8_0, arsitektur `bert`,
+  /// `bert.pooling_type = MEAN`, dimensi 384, context_length 511).
+  /// File remote `multilingual-e5-small-q8_0.gguf` (132.439.008 byte) namun
+  /// disimpan lokal dengan nama canonical ini.
+  static const String embeddingModelName = 'multilingual-e5-small.gguf';
+
+  /// URL unduhan embedding model (HuggingFace `resolve` → CDN, support Range
+  /// untuk resume). Dipakai [downloadModel] maupun
+  /// `ModelDownloadService.startDownload` (unduh latar belakang + progress UI).
+  static const String embeddingModelDownloadUrl =
+      'https://huggingface.co/TwinSunsLLC/multilingual-e5-small-gguf/'
+      'resolve/main/multilingual-e5-small-q8_0.gguf';
+
+  /// Ukuran unduhan fallback untuk UI progress — 132.439.008 byte = 126.3 MB.
+  static const double embeddingModelSizeMb = 126.3;
+
   /// Kunci SharedPreferences untuk custom model path yang dipilih user.
   static const customModelPathKey = 'custom_model_path';
 
@@ -149,6 +173,43 @@ class ModelManager {
     final dir = await _ensureModelsDir();
     final file = File(p.join(dir.path, fileName));
     return await file.exists() ? file.path : null;
+  }
+
+  /// Cek ketersediaan model embedding ([embeddingModelName]) tanpa jaringan:
+  /// `true` bila file ada di standard app storage DAN header GGUF-nya valid.
+  /// `false` → pemanggil memicu unduh (lihat [ensureEmbeddingModel] /
+  /// `ModelDownloadService.startDownload`).
+  ///
+  /// Sengaja TIDAK memakai [resolveModelPath]: tier custom-path & mesh cache
+  /// di situ ditujukan untuk model chat, bukan model embedding.
+  static Future<bool> ensureEmbeddingModelReady() async {
+    final path = await findModel(embeddingModelName);
+    if (path == null) return false;
+    return (await GgufValidator.validateFile(path)).isValidGguf;
+  }
+
+  /// Pastikan model embedding ada; bila belum, unduh sekali (sinkron,
+  /// resumable) ke `<dataRoot>/models/[embeddingModelName]`.
+  ///
+  /// Returns absolute path bila siap, `null` bila unduhan gagal/terputus
+  /// (`.tmp` dipertahankan untuk resume berikutnya). Untuk unduh latar
+  /// belakang dengan progress UI, pakai
+  /// `ModelDownloadService.instance.startDownload(url: embeddingModelDownloadUrl,
+  /// fileName: embeddingModelName)` — service itu generic (url + fileName),
+  /// jadi tidak perlu downloader baru (DRY).
+  static Future<String?> ensureEmbeddingModel({
+    Function(int bytesDownloaded, int totalBytes)? onProgress,
+    bool downloadIfMissing = true,
+  }) async {
+    if (await ensureEmbeddingModelReady()) {
+      return findModel(embeddingModelName);
+    }
+    if (!downloadIfMissing) return null;
+    return downloadModel(
+      url: embeddingModelDownloadUrl,
+      fileName: embeddingModelName,
+      onProgress: onProgress,
+    );
   }
 
   /// Cari model target (Qwen 3.5 0.8B) di P2P shared cache

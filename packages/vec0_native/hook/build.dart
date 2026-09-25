@@ -24,11 +24,18 @@ void main(List<String> args) async {
     final packageRoot = input.packageRoot.toFilePath();
     final vec0SourcesDir = '$packageRoot/../../android/app/src/main/cpp/vec0';
     final sqliteVecSource = '$vec0SourcesDir/sqlite-vec.c';
+    final entrySource = '$packageRoot/src/vec0_entry.c';
     if (!File(sqliteVecSource).existsSync()) {
       throw StateError(
         'Amalgamasi sqlite-vec tidak ditemukan: $sqliteVecSource — '
         'struktur repo berubah? Perbarui path di '
         'packages/vec0_native/hook/build.dart.',
+      );
+    }
+    if (!File(entrySource).existsSync()) {
+      throw StateError(
+        'Trampoline vec0_entry.c tidak ditemukan: $entrySource — '
+        'paket vec0_native tidak lengkap.',
       );
     }
 
@@ -37,7 +44,7 @@ void main(List<String> args) async {
       assetName: 'vec0_native_bindings_generated.dart',
       sources: [
         sqliteVecSource,
-        '$packageRoot/src/vec0_entry.c',
+        entrySource,
       ],
       includes: [vec0SourcesDir],
     );

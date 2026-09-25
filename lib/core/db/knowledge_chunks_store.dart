@@ -43,6 +43,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS $kKnowledgeChunksTableName USING vec0(
 /// (atau [path] bila di-override untuk test), memasang ekstensi sqlite-vec,
 /// lalu mengeksekusi skema [kKnowledgeChunksSchema]. Mengembalikan handle
 /// [Database] yang siap dipakai; pemanggil bertanggung jawab menutupnya.
+/// Bila eksekusi skema gagal, handle ditutup otomatis dan exception
+/// diteruskan (tidak ada handle yang menggantung).
 Future<Database> initializeKnowledgeChunksDatabase({String? path}) async {
   final dbPath = path ??
       p.join(
@@ -52,6 +54,13 @@ Future<Database> initializeKnowledgeChunksDatabase({String? path}) async {
   // openDatabaseWithVec menangani registrasi ekstensi sqlite-vec
   // (sqlite3_vec_init) sebelum koneksi dipakai.
   final db = openDatabaseWithVec(dbPath);
-  db.execute(kKnowledgeChunksSchema);
-  return db;
+  try {
+    db.execute(kKnowledgeChunksSchema);
+    return db;
+  } catch (_) {
+    // Bila pembuatan skema gagal (mis. file korup), tutup handle agar fd
+    // tidak bocor, lalu teruskan exception aslinya.
+    db.dispose();
+    rethrow;
+  }
 }

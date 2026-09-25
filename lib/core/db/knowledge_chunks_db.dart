@@ -65,11 +65,16 @@ class KnowledgeChunksDb {
   /// Menyisipkan satu chunk baru (embedding di-encode ke blob float32
   /// via `vec_f32(?)`, format yang dibutuhkan kolom vektor vec0).
   ///
-  /// Melempar [ArgumentError] bila `id` kosong, dan [StateError] bila `id`
-  /// sudah dipakai chunk lain (tabel tidak punya UNIQUE, jadi dicek dulu —
-  /// selain itu `getById` akan gagal saat ada duplikat).
+  /// Melempar [ArgumentError] bila `id` kosong atau koordinat bbox di luar
+  /// rentang 0..1, dan [StateError] bila `id` sudah dipakai chunk lain
+  /// (tabel tidak punya UNIQUE, jadi dicek dulu — selain itu `getById`
+  /// akan gagal saat ada duplikat).
   void insert(KnowledgeChunkRecord chunk) {
     _validateId(chunk.id, 'chunk.id');
+    _validateBounds(chunk.x, 'chunk.x');
+    _validateBounds(chunk.y, 'chunk.y');
+    _validateBounds(chunk.w, 'chunk.w');
+    _validateBounds(chunk.h, 'chunk.h');
     final duplicate = _db.select(
       'SELECT 1 FROM $kKnowledgeChunksTableName WHERE id = ?',
       [chunk.id],
@@ -120,11 +125,16 @@ class KnowledgeChunksDb {
 
   /// Memperbarui seluruh kolom chunk (dikenali lewat `id`).
   ///
-  /// Melempar [ArgumentError] bila `id` kosong, dan [StateError] bila tidak
-  /// ada chunk dengan `id` tersebut — agar edit yang tidak mendarat tidak
-  /// gagal diam-diam (silent data loss).
+  /// Melempar [ArgumentError] bila `id` kosong atau koordinat bbox di luar
+  /// rentang 0..1, dan [StateError] bila tidak ada chunk dengan `id`
+  /// tersebut — agar edit yang tidak mendarat tidak gagal diam-diam (silent
+  /// data loss).
   void update(KnowledgeChunkRecord chunk) {
     _validateId(chunk.id, 'chunk.id');
+    _validateBounds(chunk.x, 'chunk.x');
+    _validateBounds(chunk.y, 'chunk.y');
+    _validateBounds(chunk.w, 'chunk.w');
+    _validateBounds(chunk.h, 'chunk.h');
     _db.execute(
       'UPDATE $kKnowledgeChunksTableName '
       'SET embedding = vec_f32(?), document_name = ?, page = ?, '
@@ -192,6 +202,21 @@ class KnowledgeChunksDb {
   static void _validateId(String id, String name) {
     if (id.isEmpty) {
       throw ArgumentError.value(id, name, 'ID tidak boleh kosong.');
+    }
+  }
+
+  /// Validasi koordinat bounding box relatif halaman (kontrak skema 0..1,
+  /// lihat [kKnowledgeChunksSchema]).
+  ///
+  /// Bentuk negasi dipakai agar NaN ikut tertolak — NaN lolos dari
+  /// perbandingan `<` atau `>` biasa padahal jelas di luar rentang.
+  static void _validateBounds(double value, String name) {
+    if (!(value >= 0.0 && value <= 1.0)) {
+      throw ArgumentError.value(
+        value,
+        name,
+        'Nilai harus dalam rentang 0..1 (relatif halaman).',
+      );
     }
   }
 

@@ -1,6 +1,6 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
-project(tacit_pulse_ai LANGUAGES CXX)
+project(tacit_pulse_ai LANGUAGES C CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
@@ -57,6 +57,18 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# === Native sqlite-vec extension (vec0) ===
+# Ekstensi SQLite untuk vector similarity search (vec0). Sumber amalgamasi
+# di-vendor di android/app/src/main/cpp/vec0/ (lihat komentar di sana untuk
+# provenance) dan dikompilasi ulang di sini menjadi vec0.dll. Dart
+# me-load-nya lewat DynamicLibrary.open('vec0.dll') — satu direktori dengan
+# executable, jadi masuk pencarian bawaan LoadLibrary.
+set(VEC0_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../android/app/src/main/cpp/vec0")
+
+add_library(vec0 SHARED
+    ${VEC0_DIR}/sqlite-vec.c
+)
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
@@ -73,6 +85,9 @@ set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+
+install(TARGETS vec0 RUNTIME DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

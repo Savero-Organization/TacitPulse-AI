@@ -39,6 +39,9 @@ dependencies:
   flutter_bloc: ^8.1.6
   shared_preferences: ^2.3.4
   file_picker: ^13.1.0
+  # Code asset sqlite-vec (vec0) untuk macOS/iOS via build hook.
+  vec0_native:
+    path: packages/vec0_native
 
 dev_dependencies:
   flutter_test:

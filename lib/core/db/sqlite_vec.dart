@@ -1,13 +1,24 @@
 import 'dart:ffi';
+import 'dart:io' show Platform;
 
 import 'package:sqlite3/sqlite3.dart';
+import 'package:vec0_native/vec0_native.dart' show vec0Entrypoint;
 
-/// Nama platform dari shared library sqlite-vec yang di-bundle (libvec0.so).
+/// Nama shared library sqlite-vec per platform dari build CMake aplikasi,
+/// atau `null` bila platform memakai code asset (native assets).
 ///
-/// Build Android (externalNativeBuild CMake) dan Linux (linux/CMakeLists.txt)
-/// menghasilkan `libvec0.so` dari amalgamasi yang di-vendor di
-/// `android/app/src/main/cpp/vec0/`.
-const String _vec0LibraryName = 'libvec0.so';
+/// - Android & Linux: `libvec0.so` (externalNativeBuild CMake di Android,
+///   linux/CMakeLists.txt) dari amalgamasi yang di-vendor di
+///   `android/app/src/main/cpp/vec0/`.
+/// - Windows: `vec0.dll` dari windows/CMakeLists.txt, terpasang satu
+///   direktori dengan executable.
+/// - macOS & iOS: tidak ada library terpisah — vec0 di-bundle sebagai code
+///   asset oleh paket `vec0_native` dan di-resolve VM otomatis.
+String? _vec0LibraryName() {
+  if (Platform.isAndroid || Platform.isLinux) return 'libvec0.so';
+  if (Platform.isWindows) return 'vec0.dll';
+  return null;
+}
 
 bool _vecExtensionLoaded = false;
 
@@ -21,6 +32,10 @@ bool _vecExtensionLoaded = false;
 /// pointer fungsinya diteruskan langsung ke SQLite — sehingga tidak bergantung
 /// pada dlopen library sembarang saat runtime (aman untuk Android).
 ///
+/// Di macOS/iOS tidak ada library yang di-load manual: trampoline `@Native`
+/// milik `vec0_native` me-load code asset sekaligus mengembalikan alamat
+/// `sqlite3_vec_init` sebagai pointer mentah.
+///
 /// Aman dipanggil berulang kali; registrasi hanya terjadi sekali.
 ///
 /// [libraryPath] dapat di-override untuk keperluan test/verifikasi
@@ -28,10 +43,15 @@ bool _vecExtensionLoaded = false;
 void ensureSqliteVecLoaded({String? libraryPath}) {
   if (_vecExtensionLoaded) return;
 
-  final library = DynamicLibrary.open(libraryPath ?? _vec0LibraryName);
-  sqlite3.ensureExtensionLoaded(
-    SqliteExtension.inLibrary(library, 'sqlite3_vec_init'),
-  );
+  final path = libraryPath ?? _vec0LibraryName();
+  if (path != null) {
+    final library = DynamicLibrary.open(path);
+    sqlite3.ensureExtensionLoaded(
+      SqliteExtension.inLibrary(library, 'sqlite3_vec_init'),
+    );
+  } else {
+    sqlite3.ensureExtensionLoaded(SqliteExtension(vec0Entrypoint()));
+  }
   _vecExtensionLoaded = true;
 }
 

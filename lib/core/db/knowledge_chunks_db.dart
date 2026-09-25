@@ -64,7 +64,21 @@ class KnowledgeChunksDb {
 
   /// Menyisipkan satu chunk baru (embedding di-encode ke blob float32
   /// via `vec_f32(?)`, format yang dibutuhkan kolom vektor vec0).
+  ///
+  /// Melempar [ArgumentError] bila `id` kosong, dan [StateError] bila `id`
+  /// sudah dipakai chunk lain (tabel tidak punya UNIQUE, jadi dicek dulu —
+  /// selain itu `getById` akan gagal saat ada duplikat).
   void insert(KnowledgeChunkRecord chunk) {
+    _validateId(chunk.id, 'chunk.id');
+    final duplicate = _db.select(
+      'SELECT 1 FROM $kKnowledgeChunksTableName WHERE id = ?',
+      [chunk.id],
+    );
+    if (duplicate.isNotEmpty) {
+      throw StateError(
+        'ID chunk "${chunk.id}" sudah ada; hapus atau update dulu.',
+      );
+    }
     _db.execute(
       'INSERT INTO $kKnowledgeChunksTableName '
       '(embedding, id, document_name, page, chunk_text, x, y, w, h) '
@@ -84,7 +98,10 @@ class KnowledgeChunksDb {
   }
 
   /// Mengambil satu chunk berdasarkan ID, atau `null` bila tidak ada.
+  ///
+  /// Melempar [ArgumentError] bila `id` kosong.
   KnowledgeChunkRecord? getById(String id) {
+    _validateId(id, 'id');
     final rows = _db.select(
       'SELECT $_columns FROM $kKnowledgeChunksTableName WHERE id = ?',
       [id],
@@ -102,7 +119,12 @@ class KnowledgeChunksDb {
   }
 
   /// Memperbarui seluruh kolom chunk (dikenali lewat `id`).
+  ///
+  /// Melempar [ArgumentError] bila `id` kosong, dan [StateError] bila tidak
+  /// ada chunk dengan `id` tersebut — agar edit yang tidak mendarat tidak
+  /// gagal diam-diam (silent data loss).
   void update(KnowledgeChunkRecord chunk) {
+    _validateId(chunk.id, 'chunk.id');
     _db.execute(
       'UPDATE $kKnowledgeChunksTableName '
       'SET embedding = vec_f32(?), document_name = ?, page = ?, '
@@ -120,14 +142,26 @@ class KnowledgeChunksDb {
         chunk.id,
       ],
     );
+    if (_db.updatedRows == 0) {
+      throw StateError(
+        'Tidak ada chunk dengan id "${chunk.id}" untuk diupdate.',
+      );
+    }
   }
 
   /// Menghapus satu chunk berdasarkan ID.
-  void delete(String id) {
+  ///
+  /// Mengembalikan `true` bila ada baris yang terhapus, `false` bila `id`
+  /// tidak ditemukan — ID tak dikenal tidak dianggap error agar penghapusan
+  /// tetap idempotent (aman dipanggil berulang pada loop reindex/retry).
+  /// Melempar [ArgumentError] bila `id` kosong.
+  bool delete(String id) {
+    _validateId(id, 'id');
     _db.execute(
       'DELETE FROM $kKnowledgeChunksTableName WHERE id = ?',
       [id],
     );
+    return _db.updatedRows > 0;
   }
 
   // ---- Pencarian kemiripan ------------------------------------------------
@@ -151,6 +185,14 @@ class KnowledgeChunksDb {
         )
         .map(_toRecord)
         .toList();
+  }
+
+  // ---- Validasi ------------------------------------------------------------
+
+  static void _validateId(String id, String name) {
+    if (id.isEmpty) {
+      throw ArgumentError.value(id, name, 'ID tidak boleh kosong.');
+    }
   }
 
   // ---- Konversi vektor -----------------------------------------------------

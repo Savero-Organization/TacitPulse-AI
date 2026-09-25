@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:tacit_pulse_ai/core/db/knowledge_chunks_db.dart';
 import 'package:tacit_pulse_ai/core/db/knowledge_chunks_store.dart';
 import 'package:tacit_pulse_ai/core/db/sqlite_vec.dart';
@@ -177,6 +178,73 @@ void main() {
       expect(store.search(query, k: 0), isEmpty);
     },
   );
+
+  // Validasi bbox dilempar SEBELUM SQL dijalankan, jadi test ini cukup
+  // pakai koneksi polos tanpa libvec0.so maupun skema — selalu jalan
+  // di mesin mana pun (hermetic), tidak ikut-skip dengan test speed.
+  test('validasi bounding box menolak nilai di luar 0..1 dan NaN', () {
+    final db = sqlite3.open(':memory:');
+    addTearDown(db.dispose);
+    final store = KnowledgeChunksDb(db);
+
+    KnowledgeChunkRecord record({
+      String id = 'bbox-1',
+      double x = 0.5,
+      double y = 0.5,
+      double w = 0.4,
+      double h = 0.4,
+    }) =>
+        KnowledgeChunkRecord(
+          id: id,
+          documentName: 'SOP DEMO',
+          page: 1,
+          chunkText: 'Chunk dummy',
+          x: x,
+          y: y,
+          w: w,
+          h: h,
+          embedding: List.filled(kEmbeddingDimensions, 0.1),
+        );
+
+    // Di luar rentang 0..1 → ArgumentError.
+    expect(
+      () => store.insert(record(x: -0.1)),
+      throwsA(isA<ArgumentError>()),
+      reason: 'x negatif harus ditolak.',
+    );
+    expect(
+      () => store.insert(record(y: 1.01)),
+      throwsA(isA<ArgumentError>()),
+      reason: 'y > 1 harus ditolak.',
+    );
+    expect(
+      () => store.insert(record(w: -0.0001)),
+      throwsA(isA<ArgumentError>()),
+    );
+
+    // NaN lolos dari perbandingan `<`/`>` biasa — harus ikut tertolak
+    // (form negasi di _validateBounds).
+    expect(
+      () => store.insert(record(h: double.nan)),
+      throwsA(isA<ArgumentError>()),
+      reason: 'NaN di luar rentang 0..1 dan harus ditolak.',
+    );
+
+    // update() menulis kolom bbox yang sama → divalidasi juga.
+    expect(
+      () => store.update(record(id: 'lain', x: 2.0)),
+      throwsA(isA<ArgumentError>()),
+      reason: 'update harus menolak bbox invalid seperti insert.',
+    );
+
+    // Batas 0 dan 1 termasuk SAH: lolos validasi (gagalnya terjadi
+    // kemudian di SQL karena test ini tanpa skema — bukan ArgumentError).
+    expect(
+      () => store.insert(record(x: 0.0, y: 1.0, w: 1.0, h: 0.0)),
+      throwsA(isNot(isA<ArgumentError>())),
+      reason: 'nilai batas 0..1 inklusif tidak boleh ditolak validasi.',
+    );
+  });
 }
 
 /// Mencari libvec0.so: prioritas env `VEC0_LIB_PATH`, lalu output

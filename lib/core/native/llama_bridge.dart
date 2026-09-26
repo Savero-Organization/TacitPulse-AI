@@ -49,15 +49,30 @@ List<double> l2Normalize(List<double> vector) {
 /// Embedding teks UTF-8 via model `multilingual-e5-small.gguf` on-device.
 ///
 /// Returns vektor L2-normalized (siap cosine similarity) dengan dimensi 384.
-/// Melempar [StateError] bila model embedding belum ada di device (panggil
+/// Melempar [ArgumentError] bila `text` kosong / whitespace-only (fast-fail
+/// sebelum dispatch ke worker),
+/// [StateError] bila model embedding belum ada di device (panggil
 /// `ModelManager.ensureEmbeddingModelReady()` / `ensureEmbeddingModel()` dulu),
-/// atau [LLMInferenceException] bila native gagal.
+/// atau [LLMInferenceException] bila native gagal / worker tidak merespons.
 ///
 /// Aman dipanggil bersamaan dengan generate chat (handle & isolate terpisah);
 /// request embedding sendiri diproses berurutan (serialized).
 Future<List<double>> getEmbedding(String text) async {
+  if (text.trim().isEmpty) {
+    throw ArgumentError.value(text, 'text', 'teks kosong');
+  }
   final raw = await _EmbeddingWorker.instance.embed(text);
   return l2Normalize(raw);
+}
+
+/// Atur timeout worker embedding untuk tes (parameter `null` = biarkan).
+/// Jembatan test-only: kelas `_EmbeddingWorker` privat, jadi field timeout-nya
+/// tidak bisa dijangkau langsung dari luar library ini.
+@visibleForTesting
+void setEmbeddingTimeouts({Duration? init, Duration? request}) {
+  final worker = _EmbeddingWorker.instance;
+  if (init != null) worker.initTimeout = init;
+  if (request != null) worker.requestTimeout = request;
 }
 
 /// Pekerja isolate terdedikasi untuk embedding model.
@@ -69,6 +84,15 @@ class _EmbeddingWorker {
   Isolate? _isolate;
   SendPort? _requests;
   Completer<SendPort>? _starting;
+
+  /// Timeout tunggu pesan `init` (load GGUF ~126 MB dilakukan sinkron di
+  /// worker) — sengaja longgar; bisa dipendekkan via [setEmbeddingTimeouts].
+  @visibleForTesting
+  Duration initTimeout = const Duration(seconds: 60);
+
+  /// Timeout tunggu balasan per-request `embed` di [embed].
+  @visibleForTesting
+  Duration requestTimeout = const Duration(seconds: 30);
 
   /// Spawn worker + load model embedding (sekali, lazy). Pemanggil yang datang
   /// selama init berjalan menunggu future yang sama (serialized, tidak dobel).
@@ -93,19 +117,47 @@ class _EmbeddingWorker {
       }
 
       final control = ReceivePort();
-      _isolate = await Isolate.spawn(_embedWorkerMain, [path, control.sendPort]);
+      final isolate = await Isolate.spawn(_embedWorkerMain, [
+        path,
+        control.sendPort,
+      ]);
+      _isolate = isolate;
+      // Worker mati sebelum init selesai (crash / exit) → beri tahu loop init
+      // lewat port yang sama, supaya completer gagal alih-alih hang.
+      isolate.addErrorListener(control.sendPort);
+      isolate.addOnExitListener(control.sendPort);
 
-      await for (final Object? item in control) {
-        if (item is! Map || item['type'] != 'init') continue;
-        if (item['ok'] != true) {
-          throw LLMInferenceException(
-            item['error'] as String? ?? 'gagal init worker embedding',
-          );
+      try {
+        await for (final Object? item in control.timeout(initTimeout)) {
+          if (item is List) {
+            // Balasan error-listener: [errorString, stackString].
+            throw LLMInferenceException(
+              'worker embedding crash saat init: ${item.isEmpty ? '' : item.first}',
+            );
+          }
+          if (item == null) {
+            // Balasan exit-listener: isolate berhenti sebelum init selesai.
+            throw LLMInferenceException(
+              'worker embedding berhenti sebelum init selesai',
+            );
+          }
+          if (item is! Map || item['type'] != 'init') continue;
+          if (item['ok'] != true) {
+            throw LLMInferenceException(
+              item['error'] as String? ?? 'gagal init worker embedding',
+            );
+          }
+          _requests = item['port'] as SendPort;
+          break;
         }
-        _requests = item['port'] as SendPort;
-        break;
+      } on TimeoutException {
+        throw LLMInferenceException(
+          'init worker embedding tidak merespons dalam '
+          '${initTimeout.inSeconds} detik',
+        );
+      } finally {
+        control.close(); // selalu tutup (termasuk saat throw di dalam loop)
       }
-      control.close();
       final started = _requests;
       if (started == null) {
         throw LLMInferenceException(
@@ -127,7 +179,7 @@ class _EmbeddingWorker {
     final reply = ReceivePort();
     requests.send({'cmd': 'embed', 'text': text, 'reply': reply.sendPort});
     try {
-      await for (final Object? item in reply) {
+      await for (final Object? item in reply.timeout(requestTimeout)) {
         if (item is! Map) continue;
         if (item['type'] == 'embedding') {
           return (item['vector'] as List).cast<double>();
@@ -138,18 +190,40 @@ class _EmbeddingWorker {
           );
         }
       }
+    } on TimeoutException {
+      throw LLMInferenceException(
+        'worker embedding tidak merespons dalam '
+        '${requestTimeout.inSeconds} detik',
+      );
     } finally {
       reply.close();
     }
     throw LLMInferenceException('worker embedding berhenti tanpa balasan');
   }
 
+  /// Shutdown handshake: minta worker berhenti, tunggu ack (worker yang stuck
+  /// di blocking native init tak pernah bisa ack → jatuh ke kill), lalu kill
+  /// isolate sebagai fallback yang selalu aman.
   Future<void> _shutdown() async {
-    _requests?.send({'cmd': 'shutdown'});
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    _isolate?.kill(priority: Isolate.immediate);
-    _isolate = null;
+    final requests = _requests;
+    final isolate = _isolate;
     _requests = null;
+    _isolate = null;
+    if (requests != null) {
+      final ack = ReceivePort();
+      try {
+        requests.send({'cmd': 'shutdown', 'reply': ack.sendPort});
+        await for (final Object? item
+            in ack.timeout(const Duration(seconds: 2))) {
+          if (item is Map && item['type'] == 'shutdown-ok') break;
+        }
+      } on TimeoutException {
+        // tak ada ack → lanjut ke kill di bawah (fallback disengaja).
+      } finally {
+        ack.close();
+      }
+    }
+    isolate?.kill(priority: Isolate.immediate);
   }
 }
 
@@ -190,64 +264,97 @@ void _embedWorkerMain(List<Object?> args) {
     return;
   }
 
-  final dim = bindings.tacit_embedding_dim(model);
-  if (dim <= 0) {
-    mainPort.send({
-      'type': 'init',
-      'ok': false,
-      'error': _nativeError(bindings) ?? 'tacit_embedding_dim tidak valid',
-    });
-    bindings.tacit_model_free(model);
-    bindings.tacit_free_backend();
-    return;
-  }
-
-  // Buffer output dipakai ulang tiap request (tanpa malloc churn per call).
-  final out = calloc<Float>(dim);
-
-  final requests = ReceivePort();
-  mainPort.send({'type': 'init', 'ok': true, 'port': requests.sendPort});
-
-  requests.listen((Object? msg) {
-    if (msg is! Map) return;
-    switch (msg['cmd']) {
-      case 'embed':
-        final reply = msg['reply'] as SendPort;
-        final text = msg['text'] as String;
-        final textPtr = text.toNativeUtf8();
-        try {
-          final rc = bindings.tacit_get_embedding(
-            model,
-            textPtr.cast<Char>(),
-            out,
-            dim,
-          );
-          if (rc <= 0) {
-            reply.send({
-              'type': 'error',
-              'message': _nativeError(bindings) ?? 'tacit_get_embedding rc=$rc',
-            });
-          } else {
-            reply.send({
-              'type': 'embedding',
-              'vector': out.asTypedList(rc).toList(growable: false),
-            });
-          }
-        } catch (e) {
-          reply.send({'type': 'error', 'message': '$e'});
-        } finally {
-          malloc.free(textPtr);
-        }
-      case 'shutdown':
-        calloc.free(out);
-        bindings.tacit_model_free(model);
-        bindings.tacit_free_backend();
-        requests.close();
+  try {
+    final dim = bindings.tacit_embedding_dim(model);
+    if (dim <= 0) {
+      mainPort.send({
+        'type': 'init',
+        'ok': false,
+        'error': _nativeError(bindings) ?? 'tacit_embedding_dim tidak valid',
+      });
+      bindings.tacit_model_free(model);
+      bindings.tacit_free_backend();
+      return;
     }
-  });
+
+    // Buffer output dipakai ulang tiap request (tanpa malloc churn per call).
+    final out = calloc<Float>(dim);
+
+    final requests = ReceivePort();
+    mainPort.send({'type': 'init', 'ok': true, 'port': requests.sendPort});
+
+    requests.listen((Object? msg) {
+      if (msg is! Map) return;
+      try {
+        switch (msg['cmd']) {
+          case 'embed':
+            final reply = msg['reply'] as SendPort;
+            final text = msg['text'] as String;
+            final textPtr = text.toNativeUtf8();
+            try {
+              final rc = bindings.tacit_get_embedding(
+                model,
+                textPtr.cast<Char>(),
+                out,
+                dim,
+              );
+              if (rc != dim) {
+                reply.send({
+                  'type': 'error',
+                  'message': _nativeError(bindings) ??
+                      'tacit_get_embedding rc=$rc (dim=$dim)',
+                });
+              } else {
+                reply.send({
+                  'type': 'embedding',
+                  'vector': out.asTypedList(dim).toList(growable: false),
+                });
+              }
+            } catch (e) {
+              reply.send({'type': 'error', 'message': '$e'});
+            } finally {
+              malloc.free(textPtr);
+            }
+          case 'shutdown':
+            calloc.free(out);
+            bindings.tacit_model_free(model);
+            bindings.tacit_free_backend();
+            final ackPort = msg['reply'];
+            if (ackPort is SendPort) {
+              ackPort.send({'type': 'shutdown-ok'});
+            }
+            requests.close();
+          default:
+            // Cmd tak dikenal: balas error bila ada port reply, abaikan bila tidak.
+            final unknownReply = msg['reply'];
+            if (unknownReply is SendPort) {
+              unknownReply.send({
+                'type': 'error',
+                'message': 'cmd tidak dikenal: ${msg['cmd']}',
+              });
+            }
+        }
+      } catch (e) {
+        // Jangan biarkan exception lolos: isolate mati = main-side hang.
+        final errorReply = msg['reply'];
+        if (errorReply is SendPort) {
+          errorReply.send({'type': 'error', 'message': '$e'});
+        }
+      }
+    });
+  } catch (e) {
+    // Setup worker gagal setelah model ter-load → laporkan init gagal (best effort).
+    mainPort.send({'type': 'init', 'ok': false, 'error': '$e'});
+  }
 }
 
 /// Pesan error native terakhir (thread_local; aman di worker yang sama).
+///
+/// Bergantung pada NUL-termination buffer: `Utf8.length` memindai sampai byte
+/// `'\0'` — native menjaminnya lewat penulisan via `snprintf` (selalu
+/// NUL-terminated). Kekurangan: buffer native tidak pernah di-clear pada path
+/// sukses, jadi pesan basi (stale) bisa terbaca bila sebuah path error
+/// tercapai tanpa `set_error` menulis ulang buffer.
 String? _nativeError(TacitLlamaBindings bindings) {
   final ptr = bindings.tacit_last_error();
   if (ptr == nullptr) return null;

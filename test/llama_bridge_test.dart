@@ -5,6 +5,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tacit_pulse_ai/core/native/llama_bridge.dart';
+import 'package:tacit_pulse_ai/core/native/llm_inference.dart'
+    show LLMInferenceException;
 import 'package:tacit_pulse_ai/core/utils/model_loader.dart';
 
 import 'model_manager_test.dart' show buildGgufBytes;
@@ -36,6 +38,54 @@ void main() {
     test('vektor sudah dinormalisasi tidak berubah', () {
       final out = l2Normalize([1.0, 0.0]);
       expect(out, [1.0, 0.0]);
+    });
+  });
+
+  group('getEmbedding validasi input', () {
+    test('teks kosong (\'\') → ArgumentError', () async {
+      await expectLater(getEmbedding(''), throwsArgumentError);
+    });
+
+    test('whitespace-only → ArgumentError (sebelum dispatch ke worker)',
+        () async {
+      await expectLater(getEmbedding('   \t\n  '), throwsArgumentError);
+      await expectLater(getEmbedding(' '), throwsArgumentError);
+    });
+  });
+
+  group('getEmbedding init worker gagal', () {
+    late Directory tempRoot;
+
+    setUp(() {
+      tempRoot = Directory.systemTemp.createTempSync('tacit_emb_init_fail');
+      ModelPaths.dataRootOverride = () async => tempRoot;
+      setEmbeddingTimeouts(init: const Duration(seconds: 10));
+    });
+
+    tearDown(() {
+      ModelPaths.dataRootOverride = null;
+      setEmbeddingTimeouts(
+        init: const Duration(seconds: 60),
+        request: const Duration(seconds: 30),
+      );
+      if (tempRoot.existsSync()) {
+        tempRoot.deleteSync(recursive: true);
+      }
+    });
+
+    test('GGUF rusak → LLMInferenceException, tidak hang', () async {
+      final dir = Directory('${tempRoot.path}/models')
+        ..createSync(recursive: true);
+      File('${dir.path}/${ModelManager.embeddingModelName}')
+          .writeAsStringSync('bukan gguf — byte sampah');
+
+      final watch = Stopwatch()..start();
+      await expectLater(
+        getEmbedding('halo dunia').timeout(const Duration(seconds: 20)),
+        throwsA(isA<LLMInferenceException>()),
+      );
+      watch.stop();
+      expect(watch.elapsed, lessThan(const Duration(seconds: 15)));
     });
   });
 

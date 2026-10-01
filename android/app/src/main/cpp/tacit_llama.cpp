@@ -253,6 +253,94 @@ bool generate_int(tacit_model * h,
     return true;
 }
 
+// Batas panjang input embedding (token) — jendela latih multilingual-e5-small.
+// Teks lebih panjang dipotong (ceilings; upgrade path: chunk-and-average).
+constexpr int kEmbeddingMaxTokens = 512;
+
+// Core embedding path: tokenize -> decode -> pool (MEAN dari GGUF pooling
+// metadata; fallback mean manual bila pooling NONE) ke buffer mentah.
+// Mengembalikan dim (jumlah float) pada sukses, -1 pada error (pesan -> error).
+int embed_int(tacit_model * h,
+              const char * text,
+              std::vector<float> & out,
+              std::string & error) {
+    if (h->model == nullptr || h->ctx == nullptr || h->vocab == nullptr) {
+        error = "model handle is not loaded";
+        return -1;
+    }
+
+    // Dimensi keluaran embedding (== n_embd untuk e5-small: 384).
+    const int dim = static_cast<int>(llama_model_n_embd_out(h->model));
+    if (dim <= 0) {
+        error = "model has no embedding size";
+        return -1;
+    }
+
+    std::vector<llama_token> tokens;
+    if (!tokenize(h->vocab, text, tokens)) {
+        error = "failed to tokenize the text";
+        return -1;
+    }
+    if (static_cast<int>(tokens.size()) > kEmbeddingMaxTokens) {
+        tokens.resize(static_cast<size_t>(kEmbeddingMaxTokens));
+    }
+
+    // Minta konteks menghitung embeddings untuk SEMUA token batch
+    // (setara output_all di llama.cpp) — wajib sebelum decode.
+    llama_set_embeddings(h->ctx, true);
+
+    // State KV segar: sisa sequence sebelumnya tidak relevan untuk embedding
+    // (contoh resmi examples/embedding juga clear sebelum decode).
+    llama_memory_clear(llama_get_memory(h->ctx), /*data=*/true);
+
+    // pos = NULL -> posisi dilacak otomatis (0..n-1); seq_id = NULL -> seq 0;
+    // logits = NULL + embeddings -> semua token output (lihat llama.h).
+    llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
+    const int32_t rc = llama_decode(h->ctx, batch);
+    if (rc != 0) {
+        error = rc == 1
+                    ? "llama_decode: KV cache full (increase context size)"
+                    : "llama_decode(embedding) failed";
+        return -1;
+    }
+
+    out.assign(static_cast<size_t>(dim), 0.0f);
+
+    const float * pooled = nullptr;
+    if (llama_pooling_type(h->ctx) != LLAMA_POOLING_TYPE_NONE) {
+        pooled = llama_get_embeddings_seq(h->ctx, /*seq_id=*/0);
+        if (pooled == nullptr) {
+            error = "llama_get_embeddings_seq returned NULL";
+            return -1;
+        }
+        memcpy(out.data(), pooled, sizeof(float) * static_cast<size_t>(dim));
+    } else {
+        // Fallback: model GGUF tanpa metadata pooling -> mean per token.
+        int counted = 0;
+        for (int32_t i = 0; i < static_cast<int32_t>(tokens.size()); ++i) {
+            const float * embd = llama_get_embeddings_ith(h->ctx, i);
+            if (embd == nullptr) {
+                continue;
+            }
+            for (int d = 0; d < dim; ++d) {
+                out[static_cast<size_t>(d)] += embd[d];
+            }
+            ++counted;
+        }
+        if (counted == 0) {
+            error = "no token embeddings produced";
+            return -1;
+        }
+        for (int d = 0; d < dim; ++d) {
+            out[static_cast<size_t>(d)] /= static_cast<float>(counted);
+        }
+    }
+
+    // Idle bersih: jangan menahan KV cache antar panggilan (seperti tacit_reset).
+    llama_memory_clear(llama_get_memory(h->ctx), /*data=*/true);
+    return dim;
+}
+
 }
 
 extern "C" {
@@ -414,6 +502,53 @@ int tacit_eval_prompt(tacit_model * model,
         }
     }
     return 0;
+}
+
+int tacit_embedding_dim(tacit_model * model) {
+    if (model == nullptr || model->model == nullptr) {
+        set_error("model handle is null");
+        return -1;
+    }
+    return static_cast<int>(llama_model_n_embd_out(model->model));
+}
+
+int tacit_get_embedding(tacit_model * model,
+                        const char * text,
+                        float * out,
+                        int out_cap) {
+    if (model == nullptr) {
+        set_error("model handle is null");
+        return -1;
+    }
+    if (text == nullptr) {
+        set_error("text is null");
+        return -1;
+    }
+
+    const int dim = tacit_embedding_dim(model);
+    if (dim < 0) {
+        return -1; // set_error sudah dipanggil tacit_embedding_dim
+    }
+    if (out == nullptr || out_cap <= 0) {
+        return dim; // size query: tidak ada yang ditulis
+    }
+    if (out_cap < dim) {
+        set_error("embedding output buffer too small");
+        return -1;
+    }
+
+    std::vector<float> buffer;
+    std::string error;
+    {
+        std::lock_guard<std::mutex> lock(model->mtx);
+        const int got = embed_int(model, text, buffer, error);
+        if (got < 0) {
+            set_error(error.c_str());
+            return -1;
+        }
+    }
+    memcpy(out, buffer.data(), sizeof(float) * static_cast<size_t>(dim));
+    return dim;
 }
 
 const char * tacit_last_error(void) {

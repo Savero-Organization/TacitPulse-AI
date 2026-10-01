@@ -100,6 +100,38 @@ int tacit_eval_prompt(tacit_model * model,
                       TokenCallback callback,
                       void * user_data);
 
+/// Embedding dimension (n_embd) of the loaded model — e.g. 384 for
+/// multilingual-e5-small. Returns -1 on error (query tacit_last_error).
+int tacit_embedding_dim(tacit_model * model);
+
+/// Computes one embedding for UTF-8 `text` using llama.cpp embedding mode
+/// (context created by tacit_init_context / tacit_model_load; pooling type
+/// comes from the GGUF metadata, e.g. bert.pooling_type = MEAN for
+/// multilingual-e5-small.gguf — when the model has no pooling metadata the
+/// tokens are mean-pooled manually as a fallback).
+///
+/// Buffer contract (no malloc churn — the caller owns `out`):
+///   - `out == NULL` or `out_cap <= 0`  -> size query: nothing is written and
+///     the model's embedding dimension is returned (same value as
+///     tacit_embedding_dim) so the caller can allocate exactly once.
+///   - `out_cap < dim`                  -> -1, set_error("buffer too small").
+///   - otherwise the `dim` floats are written into `out` and `dim` is
+///     returned (dim == 0 is therefore impossible on success).
+/// Returns -1 on any failure (query tacit_last_error).
+///
+/// The vector is NOT normalized here — normalization happens in Dart inside
+/// getEmbedding() so every caller gets L2-normalized output for cosine
+/// similarity. Text longer than the model's 512-token training window is
+/// truncated (documented ceiling; chunk-and-average is the upgrade path).
+///
+/// Thread-safety: serialized per handle with the same mutex as
+/// tacit_generate; safe to call from a thread while another thread generates
+/// with a DIFFERENT handle (separate llama_context).
+int tacit_get_embedding(tacit_model * model,
+                        const char * text,
+                        float * out,
+                        int out_cap);
+
 /// Returns a null-terminated description, NULL if there was no error.
 const char * tacit_last_error(void);
 

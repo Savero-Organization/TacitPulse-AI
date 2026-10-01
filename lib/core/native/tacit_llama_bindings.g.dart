@@ -22,6 +22,19 @@ class TacitLlamaBindings {
     ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName) lookup,
   ) : _lookup = lookup;
 
+  /// Embedding dimension (n_embd) of the loaded model — e.g. 384 for
+  /// multilingual-e5-small. Returns -1 on error (query tacit_last_error).
+  int tacit_embedding_dim(ffi.Pointer<tacit_model> model) {
+    return _tacit_embedding_dim(model);
+  }
+
+  late final _tacit_embedding_dimPtr =
+      _lookup<ffi.NativeFunction<ffi.Int Function(ffi.Pointer<tacit_model>)>>(
+        'tacit_embedding_dim',
+      );
+  late final _tacit_embedding_dim = _tacit_embedding_dimPtr
+      .asFunction<int Function(ffi.Pointer<tacit_model>)>();
+
   /// Evaluates a prompt into the model context (KV cache) without generating
   /// new tokens. callback fires once per prompt token with its text piece and
   /// may return non-zero to abort early. Returns 0 on success, -1 on error.
@@ -159,6 +172,59 @@ class TacitLlamaBindings {
         )
       >();
 
+  /// Computes one embedding for UTF-8 `text` using llama.cpp embedding mode
+  /// (context created by tacit_init_context / tacit_model_load; pooling type
+  /// comes from the GGUF metadata, e.g. bert.pooling_type = MEAN for
+  /// multilingual-e5-small.gguf — when the model has no pooling metadata the
+  /// tokens are mean-pooled manually as a fallback).
+  ///
+  /// Buffer contract (no malloc churn — the caller owns `out`):
+  /// - `out == NULL` or `out_cap <= 0`  -> size query: nothing is written and
+  /// the model's embedding dimension is returned (same value as
+  /// tacit_embedding_dim) so the caller can allocate exactly once.
+  /// - `out_cap < dim`                  -> -1, set_error("buffer too small").
+  /// - otherwise the `dim` floats are written into `out` and `dim` is
+  /// returned (dim == 0 is therefore impossible on success).
+  /// Returns -1 on any failure (query tacit_last_error).
+  ///
+  /// The vector is NOT normalized here — normalization happens in Dart inside
+  /// getEmbedding() so every caller gets L2-normalized output for cosine
+  /// similarity. Text longer than the model's 512-token training window is
+  /// truncated (documented ceiling; chunk-and-average is the upgrade path).
+  ///
+  /// Thread-safety: serialized per handle with the same mutex as
+  /// tacit_generate; safe to call from a thread while another thread generates
+  /// with a DIFFERENT handle (separate llama_context).
+  int tacit_get_embedding(
+    ffi.Pointer<tacit_model> model,
+    ffi.Pointer<ffi.Char> text,
+    ffi.Pointer<ffi.Float> out,
+    int out_cap,
+  ) {
+    return _tacit_get_embedding(model, text, out, out_cap);
+  }
+
+  late final _tacit_get_embeddingPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Int Function(
+            ffi.Pointer<tacit_model>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Float>,
+            ffi.Int,
+          )
+        >
+      >('tacit_get_embedding');
+  late final _tacit_get_embedding = _tacit_get_embeddingPtr
+      .asFunction<
+        int Function(
+          ffi.Pointer<tacit_model>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Float>,
+          int,
+        )
+      >();
+
   /// Initializes the llama.cpp backend. Idempotent: the mutex-guarded
   /// once-per-process flag makes repeat calls a no-op, whichever entry point
   /// (this function or tacit_init_context) runs first.
@@ -232,7 +298,9 @@ class TacitLlamaBindings {
   late final _tacit_model_load = _tacit_model_loadPtr
       .asFunction<ffi.Pointer<tacit_model> Function(ffi.Pointer<ffi.Char>)>();
 
-  /// Clears the KV cache.
+  /// Clears the KV cache and wipes the cache buffers.
+  /// Used by the Dart worker after every generation (the app re-prompts full
+  /// history each turn, so stale KV only wastes memory while idle).
   /// Returns 0 on success, -1 on failure.
   int tacit_reset(ffi.Pointer<tacit_model> model) {
     return _tacit_reset(model);

@@ -16,6 +16,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' show log;
 import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -75,6 +76,43 @@ void setEmbeddingTimeouts({Duration? init, Duration? request}) {
   if (request != null) worker.requestTimeout = request;
 }
 
+/// Entry point worker isolate yang sedang ditimpa untuk tes; `null` = pakai
+/// [_embedWorkerMain] yang asli. Production tidak pernah mengubahnya.
+void Function(List<Object?> args)? _workerMainOverride;
+
+/// Jembatan test-only: ganti entry point worker isolate dengan fake.
+///
+/// Ini satu-satunya cara menguji lifecycle worker tanpa `libtacit_llama.so` +
+/// model GGUF asli: `init` hanya sukses kalau native backend benar-benar bisa
+/// dibuka dan model ter-load, sedangkan bug yang diuji justru terjadi
+/// SETELAH `init` sukses. Production selalu `null` — panggil dengan `null` lagi
+/// di tearDown.
+@visibleForTesting
+void setEmbeddingWorkerMainForTest(void Function(List<Object?> args)? main) {
+  _workerMainOverride = main;
+}
+
+/// Matikan worker embedding yang masih hidup lalu kembalikan state worker ke
+/// kosong, supaya test berikutnya mulai bersih.
+///
+/// Jembatan test-only: [_EmbeddingWorker] adalah singleton tanpa `dispose()`
+/// publik, jadi test yang menyuntikkan worker palsu akan mencemari test lain
+/// di file yang sama — worker palsu yang masih hidup akan dipakai panggilan
+/// `getEmbedding` berikutnya dan test yang mengharapkan kegagalan jadi lolos.
+@visibleForTesting
+Future<void> resetEmbeddingWorkerForTest() =>
+    _EmbeddingWorker.instance.shutdownForTest();
+
+/// Timeout menunggu ack `shutdown-ok` pada handshake shutdown worker.
+///
+/// Untuk satu embedding BERT 512 token di perangkat mobile kelas bawah bisa
+/// butuh 2–4 detik di async native. Batas 2 detik terlalu rapat sehingga
+/// shutdown sering mendarat di `TimeoutException` lalu langsung
+/// `Isolate.kill(priority: Isolate.immediate)` pada worker yang justru sedang
+/// menyelesaikan pekerjaan — free model/backend native terputus di tengah jalan.
+/// 5 detik memberi buffer yang cukup tanpa menahan app terlalu lama.
+const Duration _kShutdownAckTimeout = Duration(seconds: 5);
+
 /// Pekerja isolate terdedikasi untuk embedding model.
 class _EmbeddingWorker {
   _EmbeddingWorker._();
@@ -85,6 +123,75 @@ class _EmbeddingWorker {
   SendPort? _requests;
   Completer<SendPort>? _starting;
 
+  /// Kanal [ReceivePort] yang menempel ke isolate worker selama SELURUH umur
+  /// hidup worker — bukan hanya selama handshake `init`.
+  ///
+  /// Port ini menerima dua jenis traffic yang dibedakan tipenya:
+  ///   1. balasan `init` dari `mainPort` worker (`Map` dengan `type == 'init'`),
+  ///      hanya selama [_ensureStarted] masih berjalan;
+  ///   2. event isolate yang didaftarkan lewat `Isolate.addOnExitListener` /
+  ///      `addErrorListener` — `null` untuk exit, `[error, stack]` (List) untuk
+  ///      crash.
+  ///
+  /// Kenapa port ini tidak ditutup begitu `init` selesai (bug yang diperbaiki):
+  /// begitu ditutup, isolate yang mati belakangan — OOM native atau unhandled
+  /// exception saat `embed` — melapor ke port yang sudah tutup lalu dibuang
+  /// diam-diam. Akibatnya [_requests] & [_isolate] tetap non-null padahal worker
+  /// sudah tidak ada, sehingga panggilan `embed()` berikutnya memakai
+  /// `SendPort` mati dan menggantung sampai [requestTimeout] (30 detik).
+  /// Selama port ini bertahan, kematian worker selalu terlihat dan state
+  /// selalu di-reset.
+  ReceivePort? _lifecyclePort;
+
+  /// Isolate yang sedang diawasi [_lifecyclePort]. Dipakai sebagai token
+  /// identity supaya event dari worker lama tidak mengosongkan state worker
+  /// baru yang sudah di-spawn (mis. respawn setelah crash atau shutdown).
+  Isolate? _watchedIsolate;
+
+  /// Daftarkan listener exit/error isolate ke [port] yang bertahan seumur
+  /// worker. Satu isolate hanya boleh punya SATU error listener dan SATU exit
+  /// listener (pendaftaran baru menggantikan yang lama), jadi keduanya sengaja
+  /// diarahkan ke port yang sama dan port itu tidak pernah diganti port lain
+  /// selama worker hidup.
+  void _attachLifecycle(Isolate isolate, ReceivePort port) {
+    _detachLifecycle();
+    _lifecyclePort = port;
+    _watchedIsolate = isolate;
+    isolate.addErrorListener(port.sendPort);
+    isolate.addOnExitListener(port.sendPort);
+  }
+
+  /// Lepas port pemantau + token identity (aman dipanggil berulang, juga dari
+  /// dalam handler port itu sendiri).
+  void _detachLifecycle() {
+    _lifecyclePort?.close();
+    _lifecyclePort = null;
+    _watchedIsolate = null;
+  }
+
+  /// Port balasan request `embed` yang masih menunggu jawaban worker.
+  ///
+  /// Semua port di sini milik isolate yang baru saja mati, jadi tanpa pemberi
+  /// tahu, `embed()` yang sedang berjalan menggantung penuh [requestTimeout]
+  /// (30 detik). Saat worker mati, death handler mengirim error ke
+  /// masing-masing port supaya caller gagal cepat alih-alih menunggu timeout.
+  final Set<SendPort> _inflight = <SendPort>{};
+
+  /// Batalkan semua request `embed` yang masih menggantung karena worker mati.
+  void _failInflight(String reason) {
+    if (_inflight.isEmpty) return;
+    final orphans = List<SendPort>.of(_inflight);
+    _inflight.clear();
+    for (final orphan in orphans) {
+      // Port yang sudah ditutup (request yang baru saja selesai) diam-diam
+      // menjadi no-op di `SendPort.send`.
+      orphan.send({
+        'type': 'error',
+        'message': 'worker embedding $reason saat request sedang berjalan',
+      });
+    }
+  }
+
   /// Timeout tunggu pesan `init` (load GGUF ~126 MB dilakukan sinkron di
   /// worker) — sengaja longgar; bisa dipendekkan via [setEmbeddingTimeouts].
   @visibleForTesting
@@ -93,6 +200,10 @@ class _EmbeddingWorker {
   /// Timeout tunggu balasan per-request `embed` di [embed].
   @visibleForTesting
   Duration requestTimeout = const Duration(seconds: 30);
+
+  /// [resetEmbeddingWorkerForTest] saja yang memanggil ini — cukup [_shutdown]
+  /// karena dipanggil setelah test selesai, bukan di tengah init.
+  Future<void> shutdownForTest() => _shutdown();
 
   /// Spawn worker + load model embedding (sekali, lazy). Pemanggil yang datang
   /// selama init berjalan menunggu future yang sama (serialized, tidak dobel).
@@ -116,54 +227,96 @@ class _EmbeddingWorker {
         );
       }
 
-      final control = ReceivePort();
-      final isolate = await Isolate.spawn(_embedWorkerMain, [
-        path,
-        control.sendPort,
-      ]);
+      // Satu port untuk kanal `init` sekaligus pemantau exit/error worker.
+      // Sengaja TIDAK di-close di akhir init — itu inti fix lifecycle di sini.
+      final port = ReceivePort();
+      final initDone = Completer<void>();
+      // Hasil handshake dititipkan di closure, bukan lewat `completeError`:
+      // pesan init yang telat tiba setelah [initTimeout] sudah tidak ada yang
+      // menunggu, dan `completeError` di sana akan jadi unhandled async error.
+      SendPort? startedPort;
+      String? initError;
+      String? deathReason;
+
+      final isolate = await Isolate.spawn(
+        _workerMainOverride ?? _embedWorkerMain,
+        [path, port.sendPort],
+      );
       _isolate = isolate;
-      // Worker mati sebelum init selesai (crash / exit) → beri tahu loop init
-      // lewat port yang sama, supaya completer gagal alih-alih hang.
-      isolate.addErrorListener(control.sendPort);
-      isolate.addOnExitListener(control.sendPort);
+      _attachLifecycle(isolate, port);
+
+      port.listen((Object? event) {
+        if (event is Map && event['type'] == 'init') {
+          if (event['ok'] == true) {
+            startedPort = event['port'] as SendPort?;
+          } else {
+            initError =
+                event['error'] as String? ?? 'gagal init worker embedding';
+          }
+          if (!initDone.isCompleted) initDone.complete();
+          return;
+        }
+        // Di luar handshake init: `null` = exit-listener, `List` =
+        // error-listener. Dua-duanya berarti worker tidak akan pernah sadar
+        // kembali dan setiap `SendPort` miliknya sudah tidak berlaku.
+        deathReason = event is List
+            ? (event.isEmpty ? 'crash tanpa pesan' : 'crash (${event.first})')
+            : 'berhenti';
+        if (!initDone.isCompleted) initDone.complete();
+        // Reset state hanya kalau isolate yang mengirim event ini masih worker
+        // yang aktif; kalau sudah digantikan, event basi ini tidak boleh
+        // menumpang mengosongkan state worker baru.
+        if (identical(_watchedIsolate, isolate)) {
+          _detachLifecycle();
+          _requests = null;
+          _isolate = null;
+          _failInflight(deathReason!);
+          log('[llama_bridge] worker embedding $deathReason — state direset');
+        }
+      });
 
       try {
-        await for (final Object? item in control.timeout(initTimeout)) {
-          if (item is List) {
-            // Balasan error-listener: [errorString, stackString].
-            throw LLMInferenceException(
-              'worker embedding crash saat init: ${item.isEmpty ? '' : item.first}',
-            );
-          }
-          if (item == null) {
-            // Balasan exit-listener: isolate berhenti sebelum init selesai.
-            throw LLMInferenceException(
-              'worker embedding berhenti sebelum init selesai',
-            );
-          }
-          if (item is! Map || item['type'] != 'init') continue;
-          if (item['ok'] != true) {
-            throw LLMInferenceException(
-              item['error'] as String? ?? 'gagal init worker embedding',
-            );
-          }
-          _requests = item['port'] as SendPort;
-          break;
-        }
+        await initDone.future.timeout(initTimeout);
       } on TimeoutException {
         throw LLMInferenceException(
           'init worker embedding tidak merespons dalam '
           '${initTimeout.inSeconds} detik',
         );
-      } finally {
-        control.close(); // selalu tutup (termasuk saat throw di dalam loop)
       }
-      final started = _requests;
+
+      // Urutan penting. Pesan init (ok:false) diperiksa lebih dulu: worker
+      // yang gagal lalu `return` akan mengirim pesan itu DAN memicu exit, dan
+      // pesan pertama itulah yang menjelaskan sebab aslinya — exit hanya
+      // memberi tahu worker berhenti tanpa konteks. Kalau worker mati tanpa
+      // pesan init (OOM/segfault saat load model), `initError` null dan
+      // `deathReason` yang dipakai — termasuk kasus init-ok yang telat
+      // diterima lalu worker mati, yang tetap ditolak karena port-nya sudah
+      // tidak berlaku.
+      final failure = initError;
+      if (failure != null) {
+        throw LLMInferenceException(failure);
+      }
+      final death = deathReason;
+      if (death != null) {
+        throw LLMInferenceException(
+          'worker embedding $death sebelum init selesai',
+        );
+      }
+      final started = startedPort;
       if (started == null) {
         throw LLMInferenceException(
           'worker embedding berhenti sebelum init selesai',
         );
       }
+      // Ada race kecil: worker bisa mati di antara balasan `init` dan baris
+      // ini, sehingga `SendPort` di atas sudah tidak berlaku. Identity guard
+      // menutupnya — tanpa ini state mati akan dipasang ulang oleh `_requests`.
+      if (!identical(_watchedIsolate, isolate)) {
+        throw LLMInferenceException(
+          'worker embedding berhenti sebelum init selesai',
+        );
+      }
+      _requests = started;
       starting.complete(started);
     } catch (error, stack) {
       await _shutdown();
@@ -177,6 +330,9 @@ class _EmbeddingWorker {
   Future<List<double>> embed(String text) async {
     final requests = await _ensureStarted();
     final reply = ReceivePort();
+    // Daftar SEBELUM kirim: kalau worker mati sesaat setelah ini, death
+    // handler tetap harus menemukan port ini supaya tidak ada yang hang.
+    _inflight.add(reply.sendPort);
     requests.send({'cmd': 'embed', 'text': text, 'reply': reply.sendPort});
     try {
       await for (final Object? item in reply.timeout(requestTimeout)) {
@@ -196,6 +352,7 @@ class _EmbeddingWorker {
         '${requestTimeout.inSeconds} detik',
       );
     } finally {
+      _inflight.remove(reply.sendPort);
       reply.close();
     }
     throw LLMInferenceException('worker embedding berhenti tanpa balasan');
@@ -209,12 +366,20 @@ class _EmbeddingWorker {
     final isolate = _isolate;
     _requests = null;
     _isolate = null;
+    // Tutup port pemantau di sini, bukan hanya di handler exit: jalur shutdown
+    // eksplisit mematikan isolate tanpa pernah menerima event exit-nya (port
+    // justru ditutup sebelum kill), jadi tanpa baris ini port akan menggantung
+    // sampai isolate mati. Di-detach sebelum handshake agar pesan shutdown dan
+    // event exit tidak saling berebut handler.
+    _detachLifecycle();
     if (requests != null) {
       final ack = ReceivePort();
       try {
         requests.send({'cmd': 'shutdown', 'reply': ack.sendPort});
-        await for (final Object? item
-            in ack.timeout(const Duration(seconds: 2))) {
+        // Buffer [_kShutdownAckTimeout] (5 detik), bukan 2: worker bisa sedang
+        // menyelesaikan embedding native yang butuh 2–4 detik di perangkat
+        // lambat, dan kill di tengah pekerjaan merusak free model/backend.
+        await for (final Object? item in ack.timeout(_kShutdownAckTimeout)) {
           if (item is Map && item['type'] == 'shutdown-ok') break;
         }
       } on TimeoutException {

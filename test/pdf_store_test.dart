@@ -62,6 +62,19 @@ void main() {
     expect(decodeBbox(rows.first['bbox'] as String), chunk.boundingBox);
   });
 
+  test('decodeFloat32 menolak BLOB yang bukan kelipatan 4 byte', () {
+    expect(
+      () => decodeFloat32(const [0x01, 0x02, 0x03]),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('kelipatan 4 byte'),
+        ),
+      ),
+    );
+  });
+
   test('docPathForCitation-style lookup: id dokumen, chunk, dan judul', () {
     final docId = store.saveDoc(
       title: 'Manual Atlas Copco GA75',

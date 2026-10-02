@@ -186,6 +186,11 @@ Uint8List encodeFloat32(List<double> values) {
 
 List<double> decodeFloat32(List<int> bytes) {
   final data = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+  if (data.lengthInBytes % 4 != 0) {
+    throw FormatException(
+      'BLOB embedding bukan kelipatan 4 byte: ${data.lengthInBytes}',
+    );
+  }
   final view = ByteData.sublistView(data);
   return [
     for (var i = 0; i + 4 <= view.lengthInBytes; i += 4)

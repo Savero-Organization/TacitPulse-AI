@@ -1,7 +1,10 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path/path.dart' as p;
 
 import '../../core/downloads/model_download_service.dart';
+import '../../core/rag/pdf_ingest_store.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/model_path_picker_sheet.dart';
 import '../../core/widgets/profile_app_bar_action.dart';
@@ -42,6 +45,9 @@ class _ChatViewState extends State<_ChatView> {
   // State List Berkas SOP / Knowledge Base
   late List<_SourceDoc> _sourceDocsList;
   late Set<String> _selectedDocs;
+
+  // Guard agar tap ganda pada tombol import tidak membuka file picker ganda.
+  bool _isImporting = false;
 
   @override
   void initState() {
@@ -104,17 +110,74 @@ class _ChatViewState extends State<_ChatView> {
     });
   }
 
-  void _importDoc(BuildContext context) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Importing PDF → Chunking & SQLite Vector Embedding...',
-          ),
-          duration: Duration(seconds: 2),
-        ),
+  /// Impor PDF → ekstraksi teks + bbox per halaman → chunk 250-500 token →
+  /// embedding lokal (GABUT-22) → SQLite vector store. Progres & error
+  /// ditampilkan lewat SnackBar.
+  Future<void> _importDoc(BuildContext context) async {
+    if (_isImporting) return;
+    _isImporting = true;
+    try {
+      final messenger = ScaffoldMessenger.of(context);
+      final picked = await FilePicker.pickFiles(
+        dialogTitle: 'Pilih PDF',
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
       );
+      final path = picked.isEmpty ? null : picked.first.path;
+      if (path == null || !mounted) return;
+
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              'Parsing ${p.basename(path)} → chunking → embedding lokal…',
+            ),
+            // Ditutup saat selesai/gagal (lihat bawah).
+            duration: const Duration(minutes: 5),
+          ),
+        );
+
+      try {
+        final chunkCount = await ingestPdf(path);
+        if (!mounted) return;
+
+        if (chunkCount > 0) {
+          final fileName = p.basename(path);
+          setState(() {
+            if (!_sourceDocsList.any((doc) => doc.name == fileName)) {
+              _sourceDocsList.insert(0, _SourceDoc(fileName, 'PDF'));
+            }
+            _selectedDocs.add(fileName);
+          });
+        }
+
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.success,
+              content: Text(
+                chunkCount == 0
+                    ? 'PDF tanpa lapisan teks (scan?) — tidak ada chunk tersimpan.'
+                    : '$chunkCount chunk tersimpan di SQLite Vector Store.',
+              ),
+            ),
+          );
+      } catch (error) {
+        if (!mounted) return;
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.danger,
+              content: Text('Gagal import PDF: $error'),
+            ),
+          );
+      }
+    } finally {
+      _isImporting = false;
+    }
   }
 
   /// Buka Model Path Picker Sheet; setelah custom path tersimpan, reload LLM.

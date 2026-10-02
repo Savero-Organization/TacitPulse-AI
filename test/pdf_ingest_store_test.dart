@@ -44,8 +44,8 @@ void main() {
     store = PdfStore(p.join(dir.path, 'vectors.db'));
   });
 
-  tearDown(() {
-    debugResetRagOverrides();
+  tearDown(() async {
+    await debugResetRagOverrides();
     store.close();
     dir.deleteSync(recursive: true);
   });
@@ -82,13 +82,19 @@ void main() {
   test('ingestPdf PDF tanpa lapisan teks → 0, store tidak dibuka', () async {
     final path = await _writeTextlessPdf(dir, 'scan.pdf');
     var storeOpened = false;
+    var embedCalls = 0;
     debugSetStoreFactory(() async {
       storeOpened = true;
       return store;
     });
+    installEmbedder((text) async {
+      embedCalls++;
+      return _mockEmbedding(text);
+    });
 
     expect(await ingestPdf(path), 0);
     expect(storeOpened, isFalse);
+    expect(embedCalls, 0);
     expect(store.db.select('SELECT * FROM pdf_docs'), isEmpty);
   });
 

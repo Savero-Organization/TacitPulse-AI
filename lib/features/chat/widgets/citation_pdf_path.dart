@@ -1,11 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../../../core/models/citation.dart';
 
-// Kontrak dengan branch sibling `feat/gabut-23-pdf-ingestion` — file store
-// ini belum ada di tree sebelum merge, jadi `flutter analyze` melaporkan
-// tepat satu error `uri_does_not_exist` di baris import berikut; error itu
-// hilang setelah merge. Sengaja TANPA `// ignore:` supaya sinyalnya jelas.
 import 'package:tacit_pulse_ai/core/rag/pdf_ingest_store.dart' as pdf_ingest;
 
 /// Resolve path file PDF lokal untuk [citation] lewat store ingesti
@@ -19,13 +17,15 @@ Future<String?> resolveCitationPdfPath(SourceCitation citation) async {
   String? path;
   try {
     path = await pdf_ingest.docPathForCitation(citation.id);
-  } catch (_) {
+  } catch (e) {
+    debugPrint('resolveCitationPdfPath: docPathForCitation gagal: $e');
     return null;
   }
   if (path == null || path.isEmpty) return null;
   try {
     return File(path).existsSync() ? path : null;
-  } catch (_) {
+  } catch (e) {
+    debugPrint('resolveCitationPdfPath: cek file gagal untuk $path: $e');
     return null;
   }
 }

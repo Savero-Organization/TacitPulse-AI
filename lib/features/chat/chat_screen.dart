@@ -52,6 +52,9 @@ class _ChatViewState extends State<_ChatView> {
   // Guard agar tap ganda pada tombol import tidak membuka file picker ganda.
   bool _isImporting = false;
 
+  // Guard agar tap ganda pada kartu citation tidak membuka viewer ganda.
+  bool _isOpeningCitation = false;
+
   @override
   void initState() {
     super.initState();
@@ -87,29 +90,35 @@ class _ChatViewState extends State<_ChatView> {
   /// ingesti (kontrak gabut-23, lihat citation_pdf_path.dart). Bila file
   /// tidak tersedia (mis. korpus mock tanpa file) → SnackBar, tanpa crash.
   Future<void> _openCitation(SourceCitation citation) async {
-    final path = await resolveCitationPdfPath(citation);
-    if (!mounted) return;
-    if (path == null) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              'File sumber "${citation.title}" belum tersedia di perangkat.',
+    if (_isOpeningCitation) return;
+    _isOpeningCitation = true;
+    try {
+      final path = await resolveCitationPdfPath(citation);
+      if (!mounted) return;
+      if (path == null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                'File sumber "${citation.title}" belum tersedia di perangkat.',
+              ),
             ),
+          );
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => PdfViewerScreen(
+            filePath: path,
+            initialPage: citation.page,
+            highlightBox: citation.boundingBox,
           ),
-        );
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PdfViewerScreen(
-          filePath: path,
-          initialPage: citation.page,
-          highlightBox: citation.boundingBox,
         ),
-      ),
-    );
+      );
+    } finally {
+      _isOpeningCitation = false;
+    }
   }
 
   void _send(BuildContext context) {
@@ -165,11 +174,12 @@ class _ChatViewState extends State<_ChatView> {
             content: Text(
               'Parsing ${p.basename(path)} → chunking → embedding lokal…',
             ),
-            // Ditutup saat selesai/gagal (lihat bawah).
-            duration: const Duration(minutes: 5),
+            // Durasi maksimal; ditutup eksplisit di finally bawah.
+            duration: const Duration(days: 365),
           ),
         );
 
+      var progressActive = true;
       try {
         final chunkCount = await ingestPdf(path);
         if (!mounted) return;
@@ -184,28 +194,32 @@ class _ChatViewState extends State<_ChatView> {
           });
         }
 
-        messenger
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              backgroundColor: AppColors.success,
-              content: Text(
-                chunkCount == 0
-                    ? 'PDF tanpa lapisan teks (scan?) — tidak ada chunk tersimpan.'
-                    : '$chunkCount chunk tersimpan di SQLite Vector Store.',
-              ),
+        messenger.hideCurrentSnackBar();
+        progressActive = false;
+        messenger.showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.success,
+            content: Text(
+              chunkCount == 0
+                  ? 'PDF tanpa lapisan teks (scan?) — tidak ada chunk tersimpan.'
+                  : '$chunkCount chunk tersimpan di SQLite Vector Store.',
             ),
-          );
+          ),
+        );
       } catch (error) {
+        messenger.hideCurrentSnackBar();
+        progressActive = false;
         if (!mounted) return;
-        messenger
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              backgroundColor: AppColors.danger,
-              content: Text('Gagal import PDF: $error'),
-            ),
-          );
+        messenger.showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.danger,
+            content: Text('Gagal import PDF: $error'),
+          ),
+        );
+      } finally {
+        // Pastikan snackbar progres tidak tertinggal saat widget sudah
+        // tidak mounted atau ada exception tak terduga.
+        if (progressActive) messenger.hideCurrentSnackBar();
       }
     } finally {
       _isImporting = false;

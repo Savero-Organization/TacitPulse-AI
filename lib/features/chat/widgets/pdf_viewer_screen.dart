@@ -79,6 +79,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     final index = widget.initialPage - 1;
     if (index < 0 || index >= layouts.length) return;
     final pageRect = layouts[index];
+    if (pageRect.size.isEmpty) return;
     final target = mapNormalizedBboxToPageRect(box, pageRect.size).translate(pageRect.left, pageRect.top);
     _controller.ensureVisible(target, margin: 24);
   }
@@ -133,6 +134,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           pageOverlaysBuilder: (context, pageRectInViewer, page) {
             final box = widget.highlightBox;
             if (box == null || page.pageNumber != widget.initialPage) return const <Widget>[];
+            if (pageRectInViewer.size.isEmpty) return const <Widget>[];
             return [
               BoundingBoxOverlay(boxes: [box], pageSize: pageRectInViewer.size),
             ];

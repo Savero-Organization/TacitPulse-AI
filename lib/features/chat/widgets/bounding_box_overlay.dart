@@ -8,10 +8,24 @@ import 'package:flutter/material.dart';
 /// sisi hasil clamp di-clip dulu ke rentang 0..1 supaya box RAG yang sedikit
 /// melewati tepi halaman tidak meloncat ke luar page.
 Rect mapNormalizedBboxToPageRect(Rect normalized, Size pageSize) {
-  final left = normalized.left.clamp(0.0, 1.0);
-  final top = normalized.top.clamp(0.0, 1.0);
-  final right = normalized.right.clamp(0.0, 1.0);
-  final bottom = normalized.bottom.clamp(0.0, 1.0);
+  // Normalisasi dulu: bila box terbalik (right < left / bottom < top),
+  // tukar tepinya supaya hasilnya selalu rect valid.
+  final normLeft = normalized.left <= normalized.right
+      ? normalized.left
+      : normalized.right;
+  final normRight = normalized.left <= normalized.right
+      ? normalized.right
+      : normalized.left;
+  final normTop = normalized.top <= normalized.bottom
+      ? normalized.top
+      : normalized.bottom;
+  final normBottom = normalized.top <= normalized.bottom
+      ? normalized.bottom
+      : normalized.top;
+  final left = normLeft.clamp(0.0, 1.0);
+  final top = normTop.clamp(0.0, 1.0);
+  final right = normRight.clamp(0.0, 1.0);
+  final bottom = normBottom.clamp(0.0, 1.0);
   return Rect.fromLTRB(
     left * pageSize.width,
     top * pageSize.height,

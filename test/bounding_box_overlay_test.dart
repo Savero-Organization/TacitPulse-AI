@@ -41,5 +41,30 @@ void main() {
       expect(rect.width, closeTo(100, 1e-9));
       expect(rect.height, closeTo(80, 1e-9));
     });
+
+    test('box terbalik (right < left) dinormalisasi', () {
+      final rect = mapNormalizedBboxToPageRect(
+        const Rect.fromLTRB(0.8, 0.2, 0.3, 0.7),
+        const Size(100, 100),
+      );
+      expect(rect, const Rect.fromLTRB(30, 20, 80, 70));
+    });
+
+    test('box terbalik vertikal dinormalisasi', () {
+      final rect = mapNormalizedBboxToPageRect(
+        const Rect.fromLTRB(0.2, 0.8, 0.7, 0.3),
+        const Size(100, 100),
+      );
+      expect(rect, const Rect.fromLTRB(20, 30, 70, 80));
+    });
+
+    test('box berlebar nol tetap rect valid', () {
+      final rect = mapNormalizedBboxToPageRect(
+        const Rect.fromLTWH(0.5, 0.5, 0, 0.5),
+        const Size(100, 100),
+      );
+      expect(rect.width, 0);
+      expect(rect.left, rect.right);
+    });
   });
 }

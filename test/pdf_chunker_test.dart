@@ -61,6 +61,10 @@ void main() {
       expect(chunks.single.boundingBox, long.boundingBox);
       expect(chunks.single.tokenCount, greaterThan(500));
     });
+
+    test('input kosong menghasilkan daftar chunk kosong', () {
+      expect(const PdfChunker().chunk([]), isEmpty);
+    });
   });
 
   test('parsePdfLines menghasilkan page + bbox ternormalisasi 0..1', () async {
@@ -99,5 +103,31 @@ void main() {
     expect(estimateTokens(''), 0);
     expect(estimateTokens('abcd'), 1);
     expect(estimateTokens('a' * 400), 100);
+  });
+
+  test('parsePdfLines bytes korup → FormatException terbungkus', () {
+    expect(
+      () => parsePdfLines('bukan pdf sama sekali'.codeUnits),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('Gagal mengekstrak teks PDF'),
+        ),
+      ),
+    );
+  });
+
+  test('parsePdfLines bytes kosong → FormatException terbungkus', () {
+    expect(
+      () => parsePdfLines(const []),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('Gagal mengekstrak teks PDF'),
+        ),
+      ),
+    );
   });
 }

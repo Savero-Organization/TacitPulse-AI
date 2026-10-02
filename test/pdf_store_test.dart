@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:tacit_pulse_ai/core/rag/pdf_chunker.dart';
 import 'package:tacit_pulse_ai/core/rag/pdf_store.dart';
 
@@ -105,5 +106,46 @@ void main() {
       ),
       throwsArgumentError,
     );
+  });
+
+  test('saveDoc rollback membatalkan insert sebelumnya + error asli lolos', () {
+    // Paksa kegagalan SETELAH pdf_docs ter-INSERT: trigger menolak setiap
+    // baris pdf_chunks, sehingga catch → ROLLBACK → rethrow harus dieksekusi.
+    store.db.execute('''
+      CREATE TRIGGER fail_chunk BEFORE INSERT ON pdf_chunks
+      BEGIN
+        SELECT RAISE(ABORT, 'boom');
+      END;
+    ''');
+
+    expect(
+      () => store.saveDoc(
+        title: 'rollback',
+        sourcePath: '/rb.pdf',
+        chunks: [
+          const PdfChunk(
+            page: 0,
+            text: 'x',
+            boundingBox: Rect.fromLTWH(0, 0, 1, 1),
+            tokenCount: 1,
+          ),
+        ],
+        embeddings: const [
+          [1.0],
+        ],
+      ),
+      throwsA(
+        isA<SqliteException>().having(
+          (e) => e.message,
+          'message',
+          contains('boom'),
+        ),
+      ),
+    );
+
+    // Bila ROLLBACK berhasil, pdf_docs yang sempat di-INSERT ikut hilang dan
+    // exception asli tidak tertelan kegagalan rollback.
+    expect(store.db.select('SELECT * FROM pdf_docs'), isEmpty);
+    expect(store.db.select('SELECT * FROM pdf_chunks'), isEmpty);
   });
 }

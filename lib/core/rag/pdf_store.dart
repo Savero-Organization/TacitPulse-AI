@@ -98,8 +98,12 @@ CREATE INDEX IF NOT EXISTS idx_pdf_chunks_doc_page ON pdf_chunks(doc_id, page);
       }
       db.execute('COMMIT');
       return docId;
-    } catch (_) {
-      db.execute('ROLLBACK');
+    } catch (e) {
+      try {
+        db.execute('ROLLBACK');
+      } catch (_) {
+        // Suppress secondary rollback failure to preserve original exception 'e'
+      }
       rethrow;
     }
   }

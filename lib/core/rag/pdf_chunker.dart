@@ -51,24 +51,31 @@ class PdfChunk {
 ///   (di luar scope).
 /// - PDF dua kolom diekstrak sesuai urutan konten, bukan urutan baca.
 List<PdfTextLine> parsePdfLines(List<int> bytes) {
-  final document = PdfDocument(inputBytes: bytes);
   try {
-    final lines = <PdfTextLine>[];
-    for (final line in PdfTextExtractor(document).extractTextLines()) {
-      final text = line.text.trim();
-      if (text.isEmpty) continue;
-      final size = document.pages[line.pageIndex].size;
-      lines.add(
-        PdfTextLine(
-          page: line.pageIndex,
-          text: text,
-          boundingBox: _normalize(line.bounds, size),
-        ),
-      );
+    final document = PdfDocument(inputBytes: bytes);
+    try {
+      final lines = <PdfTextLine>[];
+      for (final line in PdfTextExtractor(document).extractTextLines()) {
+        final text = line.text.trim();
+        if (text.isEmpty) continue;
+        final pageIndex = line.pageIndex;
+        if (pageIndex < 0 || pageIndex >= document.pages.count) continue;
+
+        final size = document.pages[pageIndex].size;
+        lines.add(
+          PdfTextLine(
+            page: pageIndex,
+            text: text,
+            boundingBox: _normalize(line.bounds, size),
+          ),
+        );
+      }
+      return lines;
+    } finally {
+      document.dispose();
     }
-    return lines;
-  } finally {
-    document.dispose();
+  } catch (e) {
+    throw FormatException('Gagal mengekstrak teks PDF: $e');
   }
 }
 

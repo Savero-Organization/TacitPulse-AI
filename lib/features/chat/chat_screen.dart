@@ -135,6 +135,17 @@ class _ChatViewState extends State<_ChatView> {
     try {
       final chunkCount = await ingestPdf(path);
       if (!mounted) return;
+
+      if (chunkCount > 0) {
+        final fileName = p.basename(path);
+        setState(() {
+          if (!_sourceDocsList.any((doc) => doc.name == fileName)) {
+            _sourceDocsList.insert(0, _SourceDoc(fileName, 'PDF'));
+          }
+          _selectedDocs.add(fileName);
+        });
+      }
+
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(

@@ -36,16 +36,29 @@ void installEmbedder(PdfEmbedder embedder) => _embedder = embedder;
 @visibleForTesting
 void debugSetStoreFactory(PdfStoreFactory? factory) {
   _storeFactoryOverride = factory;
+  final pending = _storeFuture;
   _storeFuture = null;
+  if (pending != null) {
+    // Tutup koneksi lama agar tidak bocor ke DB temp yang sudah dibuang test.
+    pending.then((store) => store.close()).catchError((_) {});
+  }
 }
 
 /// Kembalikan seluruh override ke kondisi produksi. Juga membuang store yang
 /// di-cache agar tidak ada koneksi ke file temp yang sudah dihapus test.
 @visibleForTesting
-void debugResetRagOverrides() {
+Future<void> debugResetRagOverrides() async {
+  final pending = _storeFuture;
   _embedder = null;
   _storeFactoryOverride = null;
   _storeFuture = null;
+  if (pending != null) {
+    try {
+      (await pending).close();
+    } catch (_) {
+      // Store gagal dibuka atau sudah ditutup — abaikan.
+    }
+  }
 }
 
 Future<List<double>> _embed(String text) {
@@ -90,6 +103,14 @@ Future<int> ingestPdf(String filePath, {String? title}) async {
   final file = File(filePath);
   if (!await file.exists()) {
     throw FileSystemException('Berkas PDF tidak ditemukan', filePath);
+  }
+  const maxFileSizeBytes = 50 * 1024 * 1024; // 50 MB
+  final stat = await file.stat();
+  if (stat.size > maxFileSizeBytes) {
+    throw FileSystemException(
+      'Ukuran berkas PDF melebihi batas 50MB',
+      filePath,
+    );
   }
   final bytes = await file.readAsBytes();
   final chunks = const PdfChunker().chunk(parsePdfLines(bytes));

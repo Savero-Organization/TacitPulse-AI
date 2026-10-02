@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
+import 'bounding_box_overlay.dart';
 
 /// Thumbnail mini halaman dokumen dengan bounding box hasil
 /// ekstraksi RAG (format seperti highlight region).
@@ -50,13 +51,8 @@ class _ThumbnailPainter extends CustomPainter {
       canvas.drawLine(Offset(4, y), Offset(5 + len, y), linePaint);
     }
 
-    // Bounding box region yang dikutip.
-    final rect = Rect.fromLTWH(
-      box.left * w,
-      box.top * h,
-      box.width * w,
-      box.height * h,
-    );
+    // Bounding box region yang dikutip — normalisasi/clamp sama seperti overlay.
+    final rect = mapNormalizedBboxToPageRect(box, Size(w, h));
     canvas.drawRect(
       rect,
       Paint()

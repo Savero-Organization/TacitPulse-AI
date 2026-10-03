@@ -240,26 +240,21 @@ class KnowledgeChunksDb {
     // Pastikan tabel tombstone ada (skema baru diinisialisasi dengan CREATE
     // TABLE IF NOT EXISTS; jalur ini melayani koneksi yang dibuka langsung).
     _db.execute(kKnowledgeChunksTombstoneSchema);
-    // Hapus + catat tombstone atomik: gagal di salah satu → rollback keduanya.
-    _db.execute('BEGIN');
-    try {
+    _db.execute(
+      'DELETE FROM $kKnowledgeChunksTableName WHERE id = ?',
+      [id],
+    );
+    final deleted = _db.updatedRows > 0;
+    if (deleted) {
+      // Tombstone BUKAN opsional: bila insert gagal, exception diteruskan
+      // agar kode pemanggil (yang memimpin transaksi) tidak menyadari seolah
+      // penghapusan sudah dicatat untuk disinkronkan.
       _db.execute(
-        'DELETE FROM $kKnowledgeChunksTableName WHERE id = ?',
-        [id],
+        'INSERT INTO knowledge_chunk_tombstones(id, deleted_at) VALUES (?, ?)',
+        [id, DateTime.now().millisecondsSinceEpoch],
       );
-      final deleted = _db.updatedRows > 0;
-      if (deleted) {
-        _db.execute(
-          'INSERT INTO knowledge_chunk_tombstones(id, deleted_at) VALUES (?, ?)',
-          [id, DateTime.now().millisecondsSinceEpoch],
-        );
-      }
-      _db.execute('COMMIT');
-      return deleted;
-    } catch (_) {
-      _db.execute('ROLLBACK');
-      rethrow;
     }
+    return deleted;
   }
 
   /// Chunk yang diperbarui (updated_at) lebih baru dari [since], urut
@@ -310,6 +305,20 @@ class KnowledgeChunksDb {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Menghapus tombstone yang lebih lama dari [retention] (default 30 hari).
+  /// Jalankan periodik agar `knowledge_chunk_tombstones` tidak tumbuh
+  /// tak terbatas. Tombstone yang masih dibutuhkan sinkronisasi peer (peer
+  /// yang belum pernah online selama rentang [retention]) tetap terbuang —
+  /// peer tersebut harus melakukan full sync ulang.
+  int purgeOldTombstones({Duration retention = const Duration(days: 30)}) {
+    final cutoff = DateTime.now().subtract(retention).millisecondsSinceEpoch;
+    _db.execute(
+      'DELETE FROM knowledge_chunk_tombstones WHERE deleted_at < ?',
+      [cutoff],
+    );
+    return _db.updatedRows;
   }
 
   // ---- Pencarian kemiripan ------------------------------------------------

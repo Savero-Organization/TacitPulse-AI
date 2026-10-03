@@ -6,6 +6,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:tacit_pulse_ai/core/db/knowledge_chunks_db.dart';
 import 'package:tacit_pulse_ai/core/db/knowledge_chunks_store.dart';
 import 'package:tacit_pulse_ai/core/db/sqlite_vec.dart';
+import 'package:tacit_pulse_ai/core/storage/models/sop_delta_payload.dart';
 import 'package:tacit_pulse_ai/core/storage/sop_vector_merger.dart';
 
 String? _resolveVec0Library() {
@@ -165,5 +166,61 @@ void main() {
     // 'ok' tidak boleh tersisa di DB (transaksi rollback).
     expect(chunks.getById('ok'), isNull);
     expect(chunks.getById('bad'), isNull);
+  });
+
+  test('mergePayload: upsert LWW + deletions tombstone terhitung semuanya',
+      skip: skip, () {
+    final t0 = DateTime.utc(2026, 1, 1, 12);
+    final t1 = t0.add(const Duration(hours: 1));
+    final t2 = t0.add(const Duration(hours: 2));
+
+    chunks.insert(_chunk('keep', updatedAt: t0, embedding: _uniform(0.1)));
+    chunks.insert(_chunk('del1', updatedAt: t0, embedding: _uniform(0.2)));
+
+    final payload = SopDeltaPayload(
+      syncTimestamp: t2,
+      upsertedChunks: [
+        _chunk('keep', updatedAt: t2, embedding: _uniform(0.9)),
+        _chunk('remote', updatedAt: t1, embedding: _uniform(0.5)),
+      ],
+      deletedChunkIds: ['del1'],
+    );
+
+    final result = merger.mergePayload(payload);
+    expect(result.inserted, 1);
+    expect(result.updated, 1);
+    expect(result.skipped, 0);
+    expect(result.deleted, 1);
+
+    expect(chunks.getById('del1'), isNull);
+    expect(chunks.getById('keep')!.embedding, _f(_uniform(0.9)));
+    expect(chunks.getById('remote'), isNotNull);
+    // Tombstone 'del1' sudah tercatat untuk sinkronisasi.
+    expect(chunks.getDeletedIdsSince(t0.subtract(const Duration(hours: 1))),
+        contains('del1'));
+  });
+
+  test('purgeOldTombstones membuang yang lama, menyimpan yang baru',
+      skip: skip, () {
+    final now = DateTime.now();
+    chunks.insert(_chunk('fresh', updatedAt: now, embedding: _uniform(0.1)));
+    chunks.delete('fresh'); // tombstone deleted_at = now (baru)
+
+    db.execute(
+      'INSERT INTO knowledge_chunk_tombstones(id, deleted_at) VALUES (?, ?)',
+      ['old', now.subtract(const Duration(days: 40)).millisecondsSinceEpoch],
+    );
+
+    final removed = chunks.purgeOldTombstones(
+      retention: const Duration(days: 30),
+    );
+    expect(removed, greaterThanOrEqualTo(1));
+
+    int countWhere(String id) => db
+        .select('SELECT COUNT(*) AS c FROM knowledge_chunk_tombstones '
+            'WHERE id = ?', [id])
+        .first['c'] as int;
+    expect(countWhere('old'), 0);
+    expect(countWhere('fresh'), 1);
   });
 }

@@ -30,7 +30,7 @@ const int kMaxHistoryTurns = 12;
 /// literal Qwen (` thinking ... response`) maupun XML (`<thinking>...`).
 String stripThinkingFromHistory(String messageContent) {
   final thinkRegex = RegExp(
-    r' thinking.*? response|<thinking>.*?</thinking>',
+    r' thinking.*? response|<thinking>.*?</thinking>|<think>.*?</think>',
     dotAll: true,
   );
   return messageContent.replaceAll(thinkRegex, '').trim();

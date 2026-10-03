@@ -367,6 +367,30 @@ void main() {
 
       await cubit.close();
     });
+
+    test('tail <|im_end|> pada jawaban selesai terhapus', () async {
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable(['Jawaban ringkas.', '<|im_end|>']);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('cek');
+      await pumpEventQueue();
+
+      expect(assistantMessage(cubit).text, 'Jawaban ringkas.');
+      await cubit.close();
+    });
+
+    test('tail parsial <|im pada piece akhir terhapus dari UI', () async {
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable(['Jawaban ringkas.', '<|im']);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('cek');
+      await pumpEventQueue();
+
+      expect(assistantMessage(cubit).text, 'Jawaban ringkas.');
+      await cubit.close();
+    });
   });
 
   group('intent routing & prompt conditioning', () {

@@ -19,7 +19,14 @@ String stripChatMlTokens(String text) {
   String next;
   do {
     next = current.replaceAll(chatMlTokenPattern, '');
-    if (next == current) return next;
+    if (next == current) break;
     current = next;
   } while (true);
+  // Potong ekor token kontrol parsial/utuh (`<|im`, `<|im_end`, `<|im_end|>`,
+  // `<|im_start|...`) hingga akhir teks — token ChatML, yang bersifat
+  // stop-sequence tidak boleh terbawa ke jawaban.
+  return current.replaceAll(
+    RegExp(r'<\|im(_end|_start)?>?.*$'),
+    '',
+  );
 }

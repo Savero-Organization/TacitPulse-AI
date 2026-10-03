@@ -153,11 +153,14 @@ void main() {
 
     test('membuang tag parsial </s di ujung teks', () {
       expect(stripSpecialTokens('teks</s'), 'teks');
+      expect(stripSpecialTokens('Jawaban.<|im_end|>'), 'Jawaban.');
+      expect(stripSpecialTokens('Jawaban.<|im_start'), 'Jawaban.');
+      expect(stripSpecialTokens('Jawaban.<|im'), 'Jawaban.');
     });
 
-    test('token parsial di tengah kalimat bukan jatah strip (jatah truncation)',
-    () {
-  expect(stripSpecialTokens('a<|im_end b'), 'a<|im_end b');
+    test('token ChatML parsial memotong ekor sampai akhir', () {
+  // Token ChatML parsial memotong sisa baris/stream (jaring pengaman final).
+  expect(stripSpecialTokens('a<|im_end b'), 'a');
 });
 
     test('membuang token parsial di ujung baris (multiLine \$)', () {
@@ -209,6 +212,24 @@ void main() {
     test('teks tanpa blok tidak berubah', () {
       const clean = 'Jawaban biasa tanpa reasoning.';
       expect(removeEmptyThinkingBlocks(clean), clean);
+    });
+    test('membuang blok XML kosong <think></think>', () {
+      const text = '<think>\n</think>Halo.';
+
+      final cleaned = removeEmptyThinkingBlocks(text);
+      expect(cleaned, isNot(contains('<think>')));
+      expect(cleaned, isNot(contains('</think>')));
+      expect(cleaned, contains('Halo.'));
+    });
+
+    test('answerContent mengekstrak jawaban setelah blok <think></think>', () {
+      expect(answerContent('<think>mikir cepat</think> Jawaban final.'),
+          'Jawaban final.');
+    });
+
+    test('thinkingContent membaca isi blok <think>...</think>', () {
+      expect(thinkingContent('<think>cek SOP dulu</think> Jawaban.'),
+          'cek SOP dulu');
     });
   });
 }

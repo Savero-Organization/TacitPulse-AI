@@ -22,20 +22,46 @@ const String kXmlThinkingEndToken = '</thinking>';
 /// Tag penutup XML yang diinjeksi guard.
 const String kXmlThinkingEndTag = '</thinking>\n';
 
-/// Daftar semua pembuka yang didukung.
+/// Token pembuka blok berpikir style XML ringkas (`<think>`).
+const String kXmlThinkStartToken = '<think>';
+
+/// Token penutup blok berpikir style XML ringkas (`</think>`).
+const String kXmlThinkEndToken = '</think>';
+
+/// Tag penutup ringkas yang diinjeksi guard.
+const String kXmlThinkEndTag = '</think>\n';
+
+/// Daftar semua pembuka yang didukung. Urutan penting: `<thinking>` sebelum
+/// `<think>` supaya teks `<thinking>...` ter-match sebagai `<thinking>`,
+/// bukan sebagai `<think>` diikuti literal `ing>`.
 const List<String> kThinkingOpenTokens = [
   kThinkingStartToken,
   kXmlThinkingStartToken,
+  kXmlThinkStartToken,
 ];
 
 /// Browser menuju token penutup yang cocok dengan pembuka tertentu.
 String matchingCloseToken(String openToken) {
-  return openToken == kXmlThinkingStartToken ? kXmlThinkingEndToken : kThinkingEndToken;
+  switch (openToken) {
+    case kXmlThinkingStartToken:
+      return kXmlThinkingEndToken;
+    case kXmlThinkStartToken:
+      return kXmlThinkEndToken;
+    default:
+      return kThinkingEndToken;
+  }
 }
 
 /// Tag penutup (lengkap, dengan newline) yang diinjeksi guard.
 String matchingCloseTag(String openToken) {
-  return openToken == kXmlThinkingStartToken ? kXmlThinkingEndTag : kThinkingEndTag;
+  switch (openToken) {
+    case kXmlThinkingStartToken:
+      return kXmlThinkingEndTag;
+    case kXmlThinkStartToken:
+      return kXmlThinkEndTag;
+    default:
+      return kThinkingEndTag;
+  }
 }
 
 /// Titik lokasi satu blok berpikir dalam teks.
@@ -179,6 +205,11 @@ String stripSpecialTokens(String input) {
     }
     cleaned = cleaned.substring(0, idx);
   }
+  // Potong ekor token kontrol ChatML parsial/utuh hingga ujung teks/stream.
+  cleaned = cleaned.replaceAll(
+    RegExp(r'<\|im(_end|_start)?>?.*$', multiLine: false),
+    '',
+  );
   return cleaned;
 }
 
@@ -189,6 +220,12 @@ final RegExp kEmptyThinkingRegExp = RegExp(r' thinking\s*response');
 /// Pola blok berpikir KOSONG format XML: `<thinking>\s*</thinking>`.
 final RegExp kEmptyXmlThinkingRegExp = RegExp(
   r'<thinking>\s*</thinking>',
+  multiLine: true,
+);
+
+/// Pola blok berpikir KOSONG format ringkas: `<think>\s*</think>`.
+final RegExp kEmptyXmlThinkRegExp = RegExp(
+  r'<think>\s*</think>',
   multiLine: true,
 );
 
@@ -203,5 +240,6 @@ final RegExp kEmptyXmlThinkingRegExp = RegExp(
 String removeEmptyThinkingBlocks(String text) {
   return text
       .replaceAll(kEmptyXmlThinkingRegExp, '')
+      .replaceAll(kEmptyXmlThinkRegExp, '')
       .replaceAll(kEmptyThinkingRegExp, '');
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../../core/models/chat_message.dart';
 import '../../../core/models/citation.dart';
@@ -162,12 +163,30 @@ class MessageBubble extends StatelessWidget {
     }
 
     if (answer.isNotEmpty) {
-      children.add(Text(
-        message.isStreaming ? '$answer ▍' : answer,
-        style: const TextStyle(
-          color: AppColors.textPrimary,
-          fontSize: 14,
-          height: 1.45,
+      children.add(MarkdownBody(
+        data: message.isStreaming ? '$answer ▍' : answer,
+        shrinkWrap: true,
+        styleSheet: MarkdownStyleSheet(
+          p: const TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 14,
+            height: 1.45,
+          ),
+          strong: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.bold,
+          ),
+          em: const TextStyle(
+            color: AppColors.textSecondary,
+            fontStyle: FontStyle.italic,
+          ),
+          code: TextStyle(
+            color: AppColors.cyanAccent,
+            backgroundColor: AppColors.slateMuted.withValues(alpha: 0.6),
+            fontFamily: 'monospace',
+            fontSize: 12.5,
+          ),
+          blockSpacing: 8,
         ),
       ));
     } else if (message.isStreaming && thinking != null) {

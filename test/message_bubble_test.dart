@@ -143,4 +143,24 @@ void main() {
     );
     expect(find.text(kThinkingBody), findsOneWidget);
   });
+
+  testWidgets('markdown bold **...** dirender sebagai bold, tanpa asterisk',
+      (tester) async {
+    await tester.pumpWidget(_app(_assistantMessage(
+      text: 'Tekanan oli stabil **"AA-221"** SOP.',
+    )));
+    await tester.pump();
+
+    // Tidak ada text widget yang masih memuat markdown asterisk mentah.
+    expect(find.textContaining('**'), findsNothing);
+
+    // Teks target muncul sebagai span terangkat (rich text) di dalam markdown.
+    final rich = find.byType(RichText);
+    final flatten = rich
+        .evaluate()
+        .map((e) => (e.widget as RichText).text.toPlainText())
+        .join('\n');
+    expect(flatten, contains('"AA-221"'));
+    expect(flatten, isNot(contains('**')));
+  });
 }

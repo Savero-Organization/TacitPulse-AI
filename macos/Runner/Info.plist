@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Diperlukan untuk menemukan perangkat Tacit Pulse di jaringan lokal.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_tacitpulse._tcp</string>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Aplikasi memerlukan akses mikrofon untuk merekam instruksi suara teknisi saat pembuatan draft SOP.</string>
 	<key>CFBundleDevelopmentRegion</key>

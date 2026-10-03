@@ -24,6 +24,7 @@ class PeerDiscoveryScreen extends StatelessWidget {
     return BlocBuilder<PeerDiscoveryCubit, PeerDiscoveryState>(
       builder: (context, state) {
         final scanning = state is PeerDiscoveryScanning;
+        final active = scanning || state is PeerDiscoveryActivePeers;
         return Scaffold(
           backgroundColor: AppColors.slateDark,
           appBar: AppBar(
@@ -52,7 +53,7 @@ class PeerDiscoveryScreen extends StatelessWidget {
                     children: [
                       Icon(
                         Icons.broadcast_on_personal,
-                        color: scanning
+                        color: active
                             ? AppColors.success
                             : AppColors.textMuted,
                       ),
@@ -60,7 +61,7 @@ class PeerDiscoveryScreen extends StatelessWidget {
                       Expanded(
                         child: Text(
                           'Perangkat ini: $localDeviceName · port $localPort\n'
-                          'Status: ${scanning ? 'Broadcasting + scanning' : 'idle'}',
+                          'Status: ${active ? 'Broadcasting + scanning' : 'idle'}',
                           key: const Key('peer_local_info'),
                           style: const TextStyle(
                               color: AppColors.textSecondary),

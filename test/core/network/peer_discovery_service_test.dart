@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -69,6 +70,12 @@ void main() {
       expect(b.id, 'p1');
       expect(b.port, 8080);
       expect(b.txtRecords['deviceName'], 'D');
+    });
+
+    test('round-trip TXT record UTF-8 (karakter selain ASCII)', () {
+      final encoded = Uint8List.fromList(utf8.encode('André-日本'));
+      final out = DiscoveredPeer.decodeTxt({'deviceName': encoded});
+      expect(out['deviceName'], 'André-日本');
     });
 
     test('decodeTxt parsing Uint8List → String', () {

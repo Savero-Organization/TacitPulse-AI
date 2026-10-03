@@ -1,7 +1,8 @@
-import 'dart:typed_data';
 // mdns_peer_discovery_service.dart — implementasi mDNS via package:nsd.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:nsd/nsd.dart' as nsd;
 
@@ -31,7 +32,9 @@ class MdnsPeerDiscoveryService implements PeerDiscoveryService {
     await stopBroadcasting();
     final txt = <String, Uint8List?>{};
     for (final e in (txtRecords ?? const <String, String>{}).entries) {
-      txt[e.key] = Uint8List.fromList(e.value.codeUnits);
+      // UTF-8, bukan code-units UTF-16 — selaras dengan decode UTF-8 di
+      // DiscoveredPeer.decodeTxt; sebaliknya karakter di luar ASCII rusak.
+      txt[e.key] = Uint8List.fromList(utf8.encode(e.value));
     }
     _registration = await nsd.register(
       nsd.Service(

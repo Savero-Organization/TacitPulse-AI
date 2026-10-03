@@ -40,6 +40,7 @@ class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
     required int port,
     Map<String, String>? txtRecords,
   }) async {
+    if (isClosed) return;
     try {
       emit(const PeerDiscoveryScanning());
       await _service.startBroadcasting(
@@ -47,9 +48,12 @@ class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
         port: port,
         txtRecords: txtRecords,
       );
+      if (isClosed) return;
       await _service.startDiscovery();
+      if (isClosed) return;
       _sub?.cancel();
       _sub = _service.discoveredPeersStream.listen((peers) {
+        if (isClosed) return;
         if (peers.isEmpty) {
           emit(const PeerDiscoveryScanning());
         } else {
@@ -57,7 +61,7 @@ class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
         }
       });
     } catch (e) {
-      emit(PeerDiscoveryError('$e'));
+      if (!isClosed) emit(PeerDiscoveryError('$e'));
     }
   }
 
@@ -79,15 +83,18 @@ class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
   Future<void> startScanningOnly() async {
     try {
       emit(const PeerDiscoveryScanning());
+      if (isClosed) return;
       await _service.startDiscovery();
+      if (isClosed) return;
       _sub?.cancel();
       _sub = _service.discoveredPeersStream.listen((peers) {
+        if (isClosed) return;
         peers.isEmpty
             ? emit(const PeerDiscoveryScanning())
             : emit(PeerDiscoveryActivePeers(peers));
       });
     } catch (e) {
-      emit(PeerDiscoveryError('$e'));
+      if (!isClosed) emit(PeerDiscoveryError('$e'));
     }
   }
 

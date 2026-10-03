@@ -54,6 +54,8 @@
          Model ditulis ke storage privat app, jadi TIDAK perlu izin storage. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Dibutuhkan nsd/mDNS untuk discovery peer di LAN. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Opsional: dibutuhkan HANYA bila kelak menampilkan progress unduhan
          sebagai notifikasi sistem (Android 13+). Aman dideklarasi lebih awal;
          saat ini progress memakai status bar in-app. -->

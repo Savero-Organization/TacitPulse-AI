@@ -65,26 +65,8 @@ Future<void> p2pServerIsolateMain(List<dynamic> args) async {
           headers: {'content-type': 'application/json'},
         );
       })
-      ..get('/models', (Request req) {
-        final dir = Directory(modelsDirPath);
-        final list = <Map<String, dynamic>>[];
-        if (dir.existsSync()) {
-          for (final entity in dir.listSync()) {
-            if (entity is! File) continue;
-            final stat = entity.statSync();
-            String? hash;
-            // Hash MD5 dihitung untuk file kecil agar memory aman; model
-            // raksasa (ratusan MB) cukup mengandalkan ukuran file.
-            if (stat.type == FileSystemEntityType.file && stat.size <= 64 * 1024 * 1024) {
-              hash = md5.convert(entity.readAsBytesSync()).toString();
-            }
-            list.add({
-              'filename': p.basename(entity.path),
-              'sizeInBytes': stat.size,
-              'hash': hash,
-            });
-          }
-        }
+      ..get('/models', (Request req) async {
+        final list = await _describeModels(modelsDirPath);
         return Response.ok(
           jsonEncode(list),
           headers: {'content-type': 'application/json'},
@@ -103,6 +85,7 @@ Future<void> p2pServerIsolateMain(List<dynamic> args) async {
 
     parent.send({'type': 'started', 'port': httpServer.port});
   } catch (e) {
+    statsTimer.cancel();
     parent.send({'type': 'error', 'message': '$e'});
     httpServer = null;
   }
@@ -129,4 +112,60 @@ Future<void> p2pServerIsolateMain(List<dynamic> args) async {
         break;
     }
   });
+}
+
+/// Cache hash per (path, ukuran, mtime) supaya `/models` tidak menghitung
+/// ulang MD5 pada setiap request.
+final Map<String, String> _hashCache = <String, String>{};
+
+/// Batas file yang di-hash; di atas ini hanya ukuran file yang dilaporkan
+/// agar hashing tetap murah.
+const int _kMaxHashBytes = 64 * 1024 * 1024;
+
+/// Daftar file di [modelsDirPath] beserta ukuran dan hash-nya.
+///
+/// Enumerasi dan hashing dilakukan asynchronously supaya isolate server tetap
+/// bisa menulis chunk ke socket peer yang sedang mengunduh.
+Future<List<Map<String, dynamic>>> _describeModels(String modelsDirPath) async {
+  final dir = Directory(modelsDirPath);
+  final list = <Map<String, dynamic>>[];
+  if (!dir.existsSync()) return list;
+
+  final entities = await dir.list(followLinks: false).toList();
+  for (final entity in entities) {
+    if (entity is! File) continue;
+    final FileStat stat;
+    try {
+      stat = await entity.stat();
+    } on FileSystemException {
+      continue; // file hilang/terkunci saat listing.
+    }
+    if (stat.type != FileSystemEntityType.file) continue;
+
+    String? hash;
+    if (stat.size <= _kMaxHashBytes) {
+      final cacheKey = '${entity.path}|${stat.size}|${stat.modified.microsecondsSinceEpoch}';
+      final cached = _hashCache[cacheKey];
+      if (cached != null) {
+        hash = cached;
+      } else {
+        try {
+          // Hash dialirkan dari file, bukan readAsBytes: memori tetap konstan
+          // dan event loop tidak terblokir selama pembacaan.
+          final digest = await md5.bind(entity.openRead()).first;
+          hash = digest.toString();
+          _hashCache[cacheKey] = hash;
+        } on FileSystemException {
+          hash = null;
+        }
+      }
+    }
+
+    list.add(<String, dynamic>{
+      'filename': p.basename(entity.path),
+      'sizeInBytes': stat.size,
+      'hash': hash,
+    });
+  }
+  return list;
 }

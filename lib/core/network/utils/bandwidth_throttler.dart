@@ -17,17 +17,25 @@ class BandwidthThrottler {
       yield* source;
       return;
     }
+    // Chunk pertama dikirim tanpa jeda supaya time-to-first-byte tidak
+    // tertahan oleh rate limit; ritme rata-rata tetap dijaga karena delay
+    // dihitung dari total kumulatif (bukan per chunk).
     var sent = 0;
+    var started = false;
     final start = DateTime.now();
     await for (final chunk in source) {
       sent += chunk.length;
-      final elapsedSeconds =
-          DateTime.now().difference(start).inMilliseconds / 1000.0;
-      final expectedSeconds = sent / max;
-      if (expectedSeconds > elapsedSeconds) {
-        await Future<void>.delayed(Duration(
-          milliseconds: ((expectedSeconds - elapsedSeconds) * 1000).round(),
-        ));
+      if (started) {
+        final elapsedSeconds =
+            DateTime.now().difference(start).inMilliseconds / 1000.0;
+        final expectedSeconds = sent / max;
+        if (expectedSeconds > elapsedSeconds) {
+          await Future<void>.delayed(Duration(
+            milliseconds: ((expectedSeconds - elapsedSeconds) * 1000).round(),
+          ));
+        }
+      } else {
+        started = true;
       }
       yield chunk;
     }

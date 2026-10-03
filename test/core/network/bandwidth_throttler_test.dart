@@ -14,22 +14,40 @@ void main() {
     expect(chunks, [1, 2, 3, 4]);
   });
 
-  test('throttling menambahkan delay tapi tidak kehilangan byte', () async {
-    final bytes = List<int>.filled(100, 7);
-    final throttler = BandwidthThrottler(maxBytesPerSec: 200);
+  test('chunk pertama dikirim tanpa jeda (time-to-first-byte)', () async {
+    // 100 B pada 100 B/s = 1 detik jika chunk pertama ikut ditunda.
+    // Chunk pertama harus langsung keluar supaya tidak ada stall di awal.
     final stopwatch = Stopwatch()..start();
-    final out = await throttler
-        .throttle(Stream.fromIterable([bytes]))
-        .expand((e) => e)
-        .toList();
+    final out = <int>[];
+    await for (final chunk in const BandwidthThrottler(maxBytesPerSec: 100)
+        .throttle(Stream.fromIterable([List<int>.filled(100, 7)]))) {
+      out.addAll(chunk);
+    }
     stopwatch.stop();
     expect(out.length, 100);
-    // 100 bytes pada 200 B/s theoretically ~0.5s.
-    expect(stopwatch.elapsedMilliseconds, greaterThanOrEqualTo(450));
+    expect(stopwatch.elapsedMilliseconds, lessThan(300));
   });
 
-  test('tidak melempar lebih dari rate * elapsed detik (verifiek byte masih ada)',
-      () async {
+  test('laju rata-rata tetap dibatasi pada chunk subsequent', () async {
+    // 4 chunk x 50 B = 200 B pada 100 B/s → total ~2 detik (chunk pertama
+    // gratis, sisanya di-pacing oleh budget kumulatif).
+    final stopwatch = Stopwatch()..start();
+    final out = <int>[];
+    await for (final chunk in const BandwidthThrottler(maxBytesPerSec: 100)
+        .throttle(Stream.fromIterable([
+          List<int>.filled(50, 1),
+          List<int>.filled(50, 2),
+          List<int>.filled(50, 3),
+          List<int>.filled(50, 4),
+        ]))) {
+      out.addAll(chunk);
+    }
+    stopwatch.stop();
+    expect(out.length, 200);
+    expect(stopwatch.elapsedMilliseconds, greaterThanOrEqualTo(1400));
+  });
+
+  test('tidak kehilangan byte maupun urutan', () async {
     final throttler = BandwidthThrottler(maxBytesPerSec: 50);
     final out = await throttler
         .throttle(Stream.fromIterable([
@@ -39,6 +57,11 @@ void main() {
         ]))
         .expand((e) => e)
         .toList();
-    expect(out, List<int>.filled(20, 1) + List<int>.filled(20, 2) + List<int>.filled(20, 3));
+    expect(
+      out,
+      List<int>.filled(20, 1) +
+          List<int>.filled(20, 2) +
+          List<int>.filled(20, 3),
+    );
   });
 }

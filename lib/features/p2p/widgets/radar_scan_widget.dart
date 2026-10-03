@@ -76,37 +76,39 @@ class _RadarPainter extends CustomPainter {
 
   final double t; // 0..1 per putaran
 
+  // Colour/geometry constant across frames — ciptakan sekali, bukan per tick.
+  static final Paint _ring = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.4
+    ..color = Colors.teal.withValues(alpha: 0.45);
+  static final Paint _sweep = Paint()
+    ..style = PaintingStyle.fill
+    ..color = Colors.teal.withValues(alpha: 0.18);
+  static final Paint _edge = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2
+    ..color = Colors.teal;
+
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
     final maxR = size.width / 2;
-    final ring = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..color = Colors.teal.withValues(alpha: 0.45);
     for (var i = 1; i <= 3; i++) {
-      canvas.drawCircle(c, maxR * i / 3, ring);
+      canvas.drawCircle(c, maxR * i / 3, _ring);
     }
     // Sweep wedge — berputar tiap 2 s.
-    final sweep = Paint()
-      ..style = PaintingStyle.fill
-      ..color = Colors.teal.withValues(alpha: 0.18);
     final startAngle = -t * 2 * pi;
     canvas.drawArc(
       Rect.fromCircle(center: c, radius: maxR),
       startAngle,
       0.7,
       true,
-      sweep,
+      _sweep,
     );
-    final edge = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..color = Colors.teal;
     canvas.drawLine(
       c,
       Offset(c.dx + maxR * cos(startAngle), c.dy + maxR * sin(startAngle)),
-      edge,
+      _edge,
     );
   }
 

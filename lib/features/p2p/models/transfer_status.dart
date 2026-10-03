@@ -48,8 +48,11 @@ class TransferStatus {
     if (speedBytesPerSec <= 0) return null;
     final remainingBytes = totalBytes - receivedBytes;
     if (remainingBytes <= 0) return Duration.zero;
-    return Duration(
-        microseconds: (remainingBytes / speedBytesPerSec * 1e6).round());
+    final seconds = remainingBytes / speedBytesPerSec;
+    // Batas atas 99 jam agar tidak overflow Duration/int saat kecepatan
+    // mendekati nol (socket stall → B/s sangat kecil).
+    if (seconds > 356400) return const Duration(hours: 99);
+    return Duration(seconds: seconds.round());
   }
 
   TransferStatus copyWith({
@@ -81,12 +84,18 @@ String formatSpeed(double bytesPerSec) {
   return '${(bytesPerSec / 1024).toStringAsFixed(0)} KB/s';
 }
 
-/// "mm:ss"; "--:--" bila null; "00:00" untuk durasi nol.
+/// "mm:ss" untuk kurang dari satu jam; "hh:mm:ss" untuk ≥ 1 jam; "--:--"
+/// bila null; "00:00" untuk durasi nol.
 String formatEta(Duration? remaining) {
   if (remaining == null) return '--:--';
-  final total = remaining.inSeconds;
-  final m = total ~/ 60;
-  final s = total % 60;
+  final h = remaining.inHours;
+  final m = remaining.inMinutes.remainder(60);
+  final s = remaining.inSeconds.remainder(60);
+  if (h > 0) {
+    return '${h.toString().padLeft(2, '0')}:'
+        '${m.toString().padLeft(2, '0')}:'
+        '${s.toString().padLeft(2, '0')}';
+  }
   return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
 }
 

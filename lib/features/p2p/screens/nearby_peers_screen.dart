@@ -29,10 +29,12 @@ class NearbyPeersScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<PeerDiscoveryCubit, PeerDiscoveryState>(
       builder: (context, state) {
-        // Anggap sedang scan bila tidak berhenti/error: radar terus berputar
-        // selagi discovery aktif, termasuk saat daftar peer sudah terisi.
-        final scanning = state is PeerDiscoveryScanning ||
-            state is PeerDiscoveryActivePeers;
+        // Radar berputar hanya selagi discovery benar-benar memindai; saat
+        // peer sudah terdaftar (ActivePeers) animasi berhenti, tapi toggle
+        // tetap bisa menghentikan discovery.
+        final isScanning = state is PeerDiscoveryScanning;
+        final discoveryActive =
+            isScanning || state is PeerDiscoveryActivePeers;
         final peers = state is PeerDiscoveryActivePeers
             ? state.peers
             : const <DiscoveredPeer>[];
@@ -41,7 +43,7 @@ class NearbyPeersScreen extends StatelessWidget {
           body: Column(
             children: [
               Center(
-                child: RadarScanWidget(scanning: scanning, size: 180),
+                child: RadarScanWidget(scanning: isScanning, size: 180),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -49,7 +51,7 @@ class NearbyPeersScreen extends StatelessWidget {
                   key: const Key('scan_toggle'),
                   onPressed: () {
                     final cubit = context.read<PeerDiscoveryCubit>();
-                    if (scanning) {
+                    if (discoveryActive) {
                       cubit.stop();
                     } else {
                       cubit.start(
@@ -59,8 +61,8 @@ class NearbyPeersScreen extends StatelessWidget {
                       );
                     }
                   },
-                  icon: Icon(scanning ? Icons.stop : Icons.radar),
-                  label: Text(scanning ? 'Stop Scan' : 'Start Scan'),
+                  icon: Icon(discoveryActive ? Icons.stop : Icons.radar),
+                  label: Text(discoveryActive ? 'Stop Scan' : 'Start Scan'),
                 ),
               ),
               if (state is PeerDiscoveryError)
@@ -75,7 +77,7 @@ class NearbyPeersScreen extends StatelessWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (scanning)
+                        if (isScanning)
                           const SizedBox(
                             key: Key('peer_scanning_indicator'),
                             width: 24,
@@ -83,7 +85,7 @@ class NearbyPeersScreen extends StatelessWidget {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         const SizedBox(height: 12),
-                        Text(scanning
+                        Text(isScanning
                             ? 'Scanning for nearby devices...'
                             : 'No devices found. Start the scan.'),
                       ],

@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
+import 'package:flutter/services.dart';
 
 /// Mode: [PairingPinMode.generate] menampilkan PIN yang harus diketik
 /// peer lain; [PairingPinMode.entry] adalah input 4 digit.
@@ -50,6 +51,7 @@ class PairingPinModalState extends State<PairingPinModal>
   late int _remaining;
   Ticker? _ticker;
   bool _timedOut = false;
+  bool _handledOutcome = false;
 
   /// Tampilan sisa detik — dapat dibaca UI & test.
   String get remainingLabel => '${_remaining}s';
@@ -122,11 +124,27 @@ class PairingPinModalState extends State<PairingPinModal>
     }
   }
 
+  /// Bungkus dialog agar dismissal dari sistem (back gesture / tap barrier)
+  /// tetap memanggil [onReject]; guarded so it fires sekali per outcome
+  /// (approve/reject yang terpanggil lebih dulu meng-set [_handledOutcome]).
+  Widget _wrapPopScope(Widget child) {
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop && !_handledOutcome) {
+          widget.onReject?.call();
+        }
+      },
+      child: child,
+    );
+  }
+
   void _approve() {
     // Setelah timeout, PIN tidak boleh di-approve lagi meski dialog masih
     // terbuka — pemilik dialog bertanggung jawab menutupnya.
     if (_timedOut) return;
     _ticker?.stop();
+    _handledOutcome = true;
     if (widget.mode == PairingPinMode.generate) {
       widget.onApprove?.call();
       return;
@@ -144,6 +162,7 @@ class PairingPinModalState extends State<PairingPinModal>
 
   void _reject() {
     _ticker?.stop();
+    _handledOutcome = true;
     widget.onReject?.call();
   }
 
@@ -154,15 +173,15 @@ class PairingPinModalState extends State<PairingPinModal>
         !RegExp(r'^\d{4}$').hasMatch(widget.expectedPin)) {
       // Konfigurasi salah: PIN entry-mode harus 4 digit numerik agar PIN
       // yang diperlukan benar-benar bisa diketik di kotak digit.
-      return AlertDialog(
+      return _wrapPopScope(AlertDialog(
         title: const Text('Konfigurasi PIN tidak valid'),
         content: const Text('expectedPin harus 4 digit numerik.'),
         actions: [
           TextButton(onPressed: _reject, child: const Text('Tutup')),
         ],
-      );
+      ));
     }
-    return AlertDialog(
+    return _wrapPopScope(AlertDialog(
       title: Text(widget.mode == PairingPinMode.generate
           ? 'Share PIN ke ${widget.peerName}'
           : 'Hubungkan ke ${widget.peerName}'),
@@ -190,8 +209,14 @@ class PairingPinModalState extends State<PairingPinModal>
                         focusNode: _focusNodes[i],
                         textAlign: TextAlign.center,
                         keyboardType: TextInputType.number,
-                        maxLength: 1,
                         enabled: !_timedOut,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          // Allow 2 chars sementara agar onChanged dapat
+                          // tetap memotong ke digit terakhir (digit baru
+                          // mengganti digit pada field yang terisi).
+                          LengthLimitingTextInputFormatter(2),
+                        ],
                         onChanged: (v) => _onChanged(i, v),
                         decoration: const InputDecoration(
                           counterText: '',
@@ -229,6 +254,6 @@ class PairingPinModalState extends State<PairingPinModal>
           child: Text(widget.mode == PairingPinMode.generate ? 'Selesai' : 'Approve'),
         ),
       ],
-    );
+    ));
   }
 }

@@ -22,7 +22,14 @@ class DiscoveredPeer {
   final Map<String, String> txtRecords;
   final DateTime lastSeen;
 
-  String get primaryAddress => addresses.isNotEmpty ? addresses.first : host;
+  /// Returns the first available IPv4 address (no ':' separator),
+  /// falling back to IPv6 or host name if unavailable. IPv6 link-local
+  /// addresses (fe80::...) gagal dipakai socket tanpa scope id, jadi
+  /// diprioritaskan terakhir.
+  String get primaryAddress => addresses.firstWhere(
+        (a) => !a.contains(':'),
+        orElse: () => addresses.isNotEmpty ? addresses.first : host,
+      );
 
   DiscoveredPeer copyWith({
     String? id,

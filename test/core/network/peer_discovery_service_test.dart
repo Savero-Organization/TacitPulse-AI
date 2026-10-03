@@ -1,4 +1,6 @@
 import 'dart:async';
+
+import 'package:flutter/widgets.dart';
 import 'dart:typed_data';
 import 'dart:convert';
 
@@ -57,11 +59,29 @@ DiscoveredPeer _peer(String id) => DiscoveredPeer(
     );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('DiscoveredPeer', () {
     test('equality mengabaikan lastSeen', () {
       final a = _peer('1');
       final b = a.copyWith(lastSeen: DateTime(2027));
       expect(a == b, isTrue);
+    });
+
+    test('primaryAddress memprioritaskan IPv4 atas IPv6 link-local', () {
+      final peer = DiscoveredPeer(
+        id: '1',
+        name: 'd',
+        host: 'h',
+        addresses: const ['fe80::1', '192.168.1.50'],
+        port: 1,
+        lastSeen: DateTime(2026),
+      );
+      expect(peer.primaryAddress, '192.168.1.50');
+      final onlyV6 = DiscoveredPeer(
+        id: '2', name: 'd', host: 'h', addresses: const ['fe80::1'], port: 1,
+        lastSeen: DateTime(2026),
+      );
+      expect(onlyV6.primaryAddress, 'fe80::1');
     });
 
     test('toJson/fromJson round-trip', () {
@@ -123,6 +143,20 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(states.last, isA<PeerDiscoveryScanning>());
       await sub.cancel();
+    });
+
+    test('app di-background menghentikan service; resume start ulang', () async {
+      await cubit.start(deviceName: 'dev', port: 8080, txtRecords: const {'a': 'b'});
+      cubit.didChangeAppLifecycleState(AppLifecycleState.paused);
+      await Future<void>.delayed(Duration.zero);
+      expect(service.discovering, isFalse);
+      expect(service.broadcasting, isFalse);
+      cubit.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+      expect(service.broadcasting, isTrue);
+      expect(service.discovering, isTrue);
+      expect(service.lastDeviceName, 'dev');
+      expect(cubit.state, isA<PeerDiscoveryScanning>());
     });
 
     test('stop menghentikan broadcasting + kembali ke Initial', () async {

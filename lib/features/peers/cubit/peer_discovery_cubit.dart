@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/network/peer_discovery_service.dart';
@@ -28,11 +29,17 @@ class PeerDiscoveryError extends PeerDiscoveryState {
   final String message;
 }
 
-class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
-  PeerDiscoveryCubit(this._service) : super(const PeerDiscoveryInitial());
+class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState>
+    with WidgetsBindingObserver {
+  PeerDiscoveryCubit(this._service) : super(const PeerDiscoveryInitial()) {
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   final PeerDiscoveryService _service;
   StreamSubscription<List<DiscoveredPeer>>? _sub;
+  String? _lastDeviceName;
+  int? _lastPort;
+  Map<String, String>? _lastTxtRecords;
 
   /// Mulai broadcasting node ini + scanning peer lain.
   Future<void> start({
@@ -41,6 +48,9 @@ class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
     Map<String, String>? txtRecords,
   }) async {
     if (isClosed) return;
+    _lastDeviceName = deviceName;
+    _lastPort = port;
+    _lastTxtRecords = txtRecords;
     try {
       emit(const PeerDiscoveryScanning());
       await _service.startBroadcasting(
@@ -98,6 +108,36 @@ class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
     }
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+        // Hentikan broadcast & discovery saat app di background supaya
+        // tidak menyedot baterai / menahan multicast lock.
+        _service.stopDiscovery();
+        _service.stopBroadcasting();
+        _sub?.cancel();
+        _sub = null;
+        break;
+      case AppLifecycleState.resumed:
+        // Restart otomatis dengan konfigurasi yang pernah dipakai.
+        final name = _lastDeviceName;
+        final port = _lastPort;
+        if (name != null && port != null) {
+          start(
+            deviceName: name,
+            port: port,
+            txtRecords: _lastTxtRecords,
+          );
+        }
+        break;
+      case AppLifecycleState.detached:
+        break;
+    }
+  }
+
   Future<void> stop() async {
     await _sub?.cancel();
     _sub = null;
@@ -108,6 +148,7 @@ class PeerDiscoveryCubit extends Cubit<PeerDiscoveryState> {
 
   @override
   Future<void> close() async {
+    WidgetsBinding.instance.removeObserver(this);
     await _sub?.cancel();
     await _service.dispose();
     return super.close();

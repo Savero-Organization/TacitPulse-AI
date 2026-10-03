@@ -75,6 +75,7 @@ class MdnsPeerDiscoveryService implements PeerDiscoveryService {
   }
 
   void _onServicesChanged() {
+    if (_controller.isClosed) return;
     final services = _discovery?.services ?? const [];
     final now = DateTime.now();
     final peers = services.map((s) {
@@ -93,7 +94,7 @@ class MdnsPeerDiscoveryService implements PeerDiscoveryService {
         peers.any((p) => !_current.any((c) => c.id == p.id)) ||
         _current.any((c) => !peers.any((p) => p.id == c.id));
     _current = peers;
-    if (changed) {
+    if (changed && !_controller.isClosed) {
       _controller.add(_current);
     }
   }

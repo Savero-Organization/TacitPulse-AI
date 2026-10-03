@@ -8,6 +8,24 @@
 
 import 'rag_retriever_service.dart';
 
+/// Menangkap token ChatML (`<|im_start|>`, `<|im_end|>`, dll.) yang mungkin
+/// tertanam di query / chunk dari PDF — mencegah prompt injection yang
+/// mematahkan struktur giliran.
+final RegExp _chatMlTokenPattern = RegExp(
+  r'<\|im_[a-zA-Z0-9_-]*\|?>?',
+  caseSensitive: false,
+);
+
+String _stripChatMlTokens(String text) {
+  var current = text;
+  String next;
+  do {
+    next = current.replaceAll(_chatMlTokenPattern, '');
+    if (next == current) return next;
+    current = next;
+  } while (true);
+}
+
 /// System prompt yang menahan model agar hanya memakai konteks referensi.
 const String kRagSystemPrompt =
     'Kamu adalah asisten teknisi maintenance pabrik. Jawab singkat, padat, '
@@ -29,8 +47,8 @@ class PromptBuilder {
         '(x: ${r.x.toStringAsFixed(2)}, y: ${r.y.toStringAsFixed(2)}, '
         'w: ${r.w.toStringAsFixed(2)}, h: ${r.h.toStringAsFixed(2)})';
     return '[${index + 1}] Dokumen: ${r.documentName} | Halaman: ${r.page} '
-        '| Kemiripan: ${(chunk.similarity * 100).toStringAsFixed(0)}% '
-        '| Area: $bbox\n${r.chunkText.trim()}';
+        '| Kemiripan: ${(chunk.similarity.clamp(0.0, 1.0) * 100).toStringAsFixed(0)}% '
+        '| Area: $bbox\n${_stripChatMlTokens(r.chunkText.trim())}';
   }
 
   /// Gabungkan semua konteks menjadi blok referensi bernomor.
@@ -53,8 +71,9 @@ class PromptBuilder {
     final contextSection = contexts.isEmpty
         ? ''
         : '\n\nReferensi:\n${buildContextBlocks(contexts)}';
+    final safeQuery = _stripChatMlTokens(trimmed);
     return '<|im_start|>system\n$systemPrompt<|im_end|>\n'
-        '<|im_start|>user\n$trimmed$contextSection<|im_end|>\n'
+        '<|im_start|>user\n$safeQuery$contextSection<|im_end|>\n'
         '<|im_start|>assistant\n';
   }
 }

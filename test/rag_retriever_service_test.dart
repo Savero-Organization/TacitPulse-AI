@@ -28,13 +28,32 @@ void main() {
       embedder: (_) async => List<double>.filled(384, 1.0),
     );
     final out = await svc.retrieve('ganti oli');
-    expect(seenK, 3);
+    expect(seenK, 10);
     expect(out.length, 2);
     expect(out.first.similarity, closeTo(0.9, 1e-9));
     expect(out.last.similarity, closeTo(0.6, 1e-9));
   });
 
-  test('topK configurable dan minScore menyaring', () async {
+  test('topK configurable membatasi jumlah chunk setelah filter', () async {
+    int? seenK;
+    final svc = RagRetrieverService(
+      search: (_, {int k = 10}) {
+        seenK = k;
+        return [
+          _rec('a', distance: 0.1),
+          _rec('b', distance: 0.2),
+          _rec('c', distance: 0.3),
+          _rec('d', distance: 0.4),
+        ];
+      },
+      embedder: (_) async => List<double>.filled(384, 1.0),
+    );
+    final out = await svc.retrieve('q', topK: 2, minScore: 0.5);
+    expect(seenK, 10);
+    expect(out.length, 2);
+  });
+
+  test('minScore menyaring lalu hasil di-trim ke topK', () async {
     final svc = RagRetrieverService(
       search: (_, {int k = 10}) =>
           [_rec('a', distance: 0.1), _rec('b', distance: 0.85)],

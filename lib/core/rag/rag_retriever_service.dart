@@ -6,6 +6,8 @@
 // kemiripan. Dimaksudkan sebagai satu-satunya pintu retrieval RAG
 // (menggantikan scanning in-memory di IntentRouter bila perlu).
 
+import 'dart:math' as math;
+
 import '../db/knowledge_chunks_db.dart';
 import '../native/llama_bridge.dart' show getEmbedding;
 
@@ -63,13 +65,18 @@ class RagRetrieverService {
       throw ArgumentError.value(topK, 'topK', 'harus > 0');
     }
     final vector = await _embed(trimmed);
-    final rows = _search(vector, k: topK);
+    // Over-fetch supaya filter minScore tidak membuang kuota topK —
+    // mis. topK=3 dan 2 hasil top-3 di bawah ambang, tetap bisa mengisi
+    // kuota dari kandidat berikutnya sebelum di-trim.
+    final fetchK = math.max(topK * 3, 10);
+    final rows = _search(vector, k: fetchK);
     return rows
         .map((r) => RetrievedChunk(
               record: r,
               similarity: 1.0 - (r.distance ?? 1.0),
             ))
         .where((c) => c.similarity >= minScore)
+        .take(topK)
         .toList(growable: false);
   }
 }

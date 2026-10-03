@@ -52,6 +52,7 @@
     <!-- Required untuk In-App Downloader (ModelDownloadService) di build
          release — debug sudah mendapatkan INTERNET dari debug manifest.
          Model ditulis ke storage privat app, jadi TIDAK perlu izin storage. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Opsional: dibutuhkan HANYA bila kelak menampilkan progress unduhan
          sebagai notifikasi sistem (Android 13+). Aman dideklarasi lebih awal;

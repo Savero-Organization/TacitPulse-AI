@@ -22,6 +22,15 @@ import 'package:tacit_pulse_ai/core/utils/model_loader.dart';
 /// Byte header GGUF minimal yang valid (magic "GGUF" + metadata
 /// `general.architecture` & `general.name`) — dipakai agar lintasan validasi
 /// GGUF di ModelManager juga berhasil.
+
+/// Pompa event queue sampai [condition] terpenuhi atau timeout — menggantikan
+/// `pumpEventQueue()` sekali yang rentan flake di mesin terparalel.
+Future<void> pumpUntil(bool Function() condition, {int maxTries = 100}) async {
+  for (var i = 0; i < maxTries && !condition(); i++) {
+    await pumpEventQueue();
+  }
+}
+
 Uint8List buildGgufBytes() {
   final b = BytesBuilder(copy: false);
   Uint8List le32(int v) {
@@ -140,8 +149,9 @@ void main() {
       fileName: 'model.gguf',
       client: client,
     );
-    await pumpEventQueue();
+    await pumpUntil(() => service.isDownloading);
     expect(service.isDownloading, isTrue);
+    await pumpUntil(() => client.ranges.isNotEmpty);
 
     await service.startDownload(
       url: 'https://other.example/x.gguf',
@@ -191,7 +201,7 @@ void main() {
 
     await pumpEventQueue();
     gate.add(full.sublist(0, half));
-    await pumpEventQueue();
+    await pumpUntil(() => service.progress.bytesDownloaded == half);
     expect(service.progress.phase, DownloadPhase.downloading);
     expect(service.progress.bytesDownloaded, half);
 
@@ -236,7 +246,7 @@ void main() {
 
     await pumpEventQueue();
     gate.add([1, 2, 3]);
-    await pumpEventQueue();
+    await pumpUntil(() => service.isDownloading);
     expect(service.isDownloading, isTrue);
 
     service.cancel();

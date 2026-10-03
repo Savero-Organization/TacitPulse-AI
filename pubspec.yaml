@@ -44,6 +44,7 @@ dependencies:
   vec0_native:
     path: packages/vec0_native
   
+  record: ^7.1.1
 
 dev_dependencies:
   flutter_test:

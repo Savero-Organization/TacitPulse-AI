@@ -58,7 +58,7 @@ class KnowledgeChunksDb {
   }
 
   /// Menutup koneksi database. Helper tidak boleh dipakai lagi setelah ini.
-  void close() => _db.dispose();
+  void close() => _db.close();
 
   // ---- CRUD --------------------------------------------------------------
 

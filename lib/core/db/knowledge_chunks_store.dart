@@ -65,7 +65,7 @@ Future<Database> initializeKnowledgeChunksDatabase({String? path}) async {
   } catch (_) {
     // Bila pembuatan skema gagal (mis. file korup), tutup handle agar fd
     // tidak bocor, lalu teruskan exception aslinya.
-    db.dispose();
+    db.close();
     rethrow;
   }
 }

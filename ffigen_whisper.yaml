@@ -1,0 +1,28 @@
+# ffigen config: generate Dart binding from the tacit_whisper C-API.
+#
+# Usage:
+#   dart run ffigen --config ffigen_whisper.yaml
+#
+name: TacitWhisperBindings
+description: Dart FFI bindings for the tacit_whisper C-API (whisper.cpp bridge).
+output: lib/core/native/tacit_whisper_bindings.g.dart
+headers:
+  entry-points:
+    - android/app/src/main/cpp/tacit_whisper.h
+  include-directives:
+    - '**/tacit_whisper.h'
+preamble: |
+  // GENERATED FILE - DO NOT EDIT.
+  // ignore_for_file: type=lint, unused_import, camel_case_types, non_constant_identifier_names
+compiler-opts:
+  - '-isystem/usr/lib/clang/22/include'
+  - '-isystem/usr/include'
+structs:
+  # tacit_whisper_context is intentionally opaque (its definition lives only in
+  # tacit_whisper.cpp), so exclude it to make ffigen generate an opaque class.
+  exclude:
+    - tacit_whisper_context
+functions:
+  include:
+    # symbol filter: hanya fungsi C-API tacit_whisper_* yang diekspos.
+    - 'tacit_whisper_.*'

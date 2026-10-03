@@ -39,7 +39,7 @@ void main() {
       );
 
       final db = openDatabaseWithVec(':memory:', vecLibraryPath: vec0Path);
-      addTearDown(db.dispose);
+      addTearDown(db.close);
       db.execute(kKnowledgeChunksSchema);
       final store = KnowledgeChunksDb(db);
 
@@ -121,7 +121,7 @@ void main() {
     skip: skipReason,
     () {
       final db = openDatabaseWithVec(':memory:', vecLibraryPath: vec0Path);
-      addTearDown(db.dispose);
+      addTearDown(db.close);
       db.execute(kKnowledgeChunksSchema);
       final store = KnowledgeChunksDb(db);
 
@@ -195,7 +195,7 @@ void main() {
   // di mesin mana pun (hermetic), tidak ikut-skip dengan test speed.
   test('validasi bounding box menolak nilai di luar 0..1 dan NaN', () {
     final db = sqlite3.open(':memory:');
-    addTearDown(db.dispose);
+    addTearDown(db.close);
     final store = KnowledgeChunksDb(db);
 
     KnowledgeChunkRecord record({

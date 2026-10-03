@@ -22,6 +22,78 @@ include_directories(
 # Masukkan llama.cpp ke dalam build tree
 add_subdirectory(${LLAMA_DIR} llama_build)
 
+# whisper.cpp: dibangun sebagai sub-proyek CMake TERPISAH (ExternalProject)
+# karena whisper.cpp mem-vendor ggml 0.25.1 sedangkan llama.cpp mem-vendor
+# ggml 0.23.0. Keduanya sama-sama mendefinisikan target bernama `ggml`, jadi
+# `add_subdirectory` berdua akan bertabrakan — whisper harus dikompilasi
+# melawan header & sumber ggml 0.25.1 miliknya sendiri, bukan ggml llama.
+set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+
+set(WHISPER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp)
+set(WHISPER_EP_BINARY_DIR ${CMAKE_BINARY_DIR}/whisper_ep)
+
+include(ExternalProject)
+ExternalProject_Add(whisper_ep
+    SOURCE_DIR ${WHISPER_DIR}
+    BINARY_DIR ${WHISPER_EP_BINARY_DIR}
+    CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+        -DCMAKE_ANDROID_NDK=${CMAKE_ANDROID_NDK}
+        -DCMAKE_ANDROID_ARCH_ABI=${CMAKE_ANDROID_ARCH_ABI}
+        -DANDROID_ABI=${ANDROID_ABI}
+        -DANDROID_PLATFORM=${ANDROID_PLATFORM}
+        -DANDROID_STL=${ANDROID_STL}
+        -DBUILD_SHARED_LIBS=OFF
+        -DGGML_OPENMP=OFF
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DWHISPER_BUILD_TESTS=OFF
+        -DWHISPER_BUILD_EXAMPLES=OFF
+        -DWHISPER_BUILD_SERVER=OFF
+    BUILD_BYPRODUCTS
+        ${WHISPER_EP_BINARY_DIR}/src/libwhisper.a
+)
+
+add_library(tacit_whisper SHARED
+    tacit_whisper.cpp
+)
+add_dependencies(tacit_whisper whisper_ep)
+target_include_directories(tacit_whisper PRIVATE
+    ${WHISPER_DIR}/include
+    ${WHISPER_DIR}/ggml/include
+)
+
+# Target impor menunjuk artefak statis yang dihasilkan ExternalProject
+# (verifikasi jalur: <ep>/src/libwhisper.a, <ep>/ggml/src/libggml*.a).
+add_library(whisper_ep_whisper STATIC IMPORTED)
+set_target_properties(whisper_ep_whisper PROPERTIES
+    IMPORTED_LOCATION ${WHISPER_EP_BINARY_DIR}/src/libwhisper.a
+    INTERFACE_INCLUDE_DIRECTORIES "${WHISPER_DIR}/include;${WHISPER_DIR}/ggml/include"
+)
+add_library(whisper_ep_ggml STATIC IMPORTED)
+set_target_properties(whisper_ep_ggml PROPERTIES
+    IMPORTED_LOCATION ${WHISPER_EP_BINARY_DIR}/ggml/src/libggml.a
+)
+add_library(whisper_ep_ggml_base STATIC IMPORTED)
+set_target_properties(whisper_ep_ggml_base PROPERTIES
+    IMPORTED_LOCATION ${WHISPER_EP_BINARY_DIR}/ggml/src/libggml-base.a
+)
+add_library(whisper_ep_ggml_cpu STATIC IMPORTED)
+set_target_properties(whisper_ep_ggml_cpu PROPERTIES
+    IMPORTED_LOCATION ${WHISPER_EP_BINARY_DIR}/ggml/src/libggml-cpu.a
+)
+
+target_link_libraries(tacit_whisper
+    PRIVATE
+    whisper_ep_whisper
+    whisper_ep_ggml
+    whisper_ep_ggml_base
+    whisper_ep_ggml_cpu
+    log
+)
+
 # Buat DLL / Shared Library bridge untuk Flutter FFI
 add_library(tacit_llama SHARED
     tacit_llama.cpp

@@ -14,8 +14,10 @@ class SopDeltaPayload {
     required this.deletedChunkIds,
   });
 
-  /// Waktu penarikan delta; peer lain akan memakai nilai ini sebagai
-  /// `lastSyncedAt` pada sinkronisasi berikutnya.
+  /// Watermark sinkronisasi berikutnya untuk peer pemanggil: nilai maksimum
+  /// `updatedAt`/`deleted_at` yang tercakup oleh batch ini. Peer boleh
+  /// langsung memakainya sebagai `lastSyncedAt` berikutnya. Di-serialize
+  /// sebagai UTC agar tidak korup pada peer di zona waktu berbeda.
   final DateTime syncTimestamp;
 
   /// Chunk baru atau diperbarui sejak snapshot terakhir.
@@ -25,7 +27,7 @@ class SopDeltaPayload {
   final List<String> deletedChunkIds;
 
   Map<String, dynamic> toJson() => {
-        'syncTimestamp': syncTimestamp.toIso8601String(),
+        'syncTimestamp': syncTimestamp.toUtc().toIso8601String(),
         'upsertedChunks':
             upsertedChunks.map((chunk) => chunk.toJson()).toList(),
         'deletedChunkIds': deletedChunkIds,
@@ -33,7 +35,7 @@ class SopDeltaPayload {
 
   factory SopDeltaPayload.fromJson(Map<String, dynamic> json) {
     return SopDeltaPayload(
-      syncTimestamp: DateTime.parse(json['syncTimestamp'] as String),
+      syncTimestamp: DateTime.parse(json['syncTimestamp'] as String).toUtc(),
       upsertedChunks: (json['upsertedChunks'] as List)
           .map((e) =>
               KnowledgeChunkRecord.fromJson(e as Map<String, dynamic>))

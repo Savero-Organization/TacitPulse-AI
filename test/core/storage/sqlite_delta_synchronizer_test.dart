@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -123,5 +124,48 @@ void main() {
     expect(restored.x, 0.1);
     expect(restored.updatedAt.millisecondsSinceEpoch,
         base.add(const Duration(minutes: 10)).millisecondsSinceEpoch);
+  });
+
+  test('migrasi: tabel lama tanpa updated_at dikonversi, data utuh',
+      skip: skip, () {
+    // Buat ulang knowledge_chunks versi skema lama (tanpa updated_at).
+    db.execute('DROP TABLE $kKnowledgeChunksTableName');
+    db.execute('''CREATE VIRTUAL TABLE $kKnowledgeChunksTableName USING vec0(
+  embedding float[$kEmbeddingDimensions] distance_metric=cosine,
+  +id TEXT, +document_name TEXT, +page INTEGER, +chunk_text TEXT,
+  +x double, +y double, +w double, +h double
+);''');
+    final blob = Float32List.fromList(
+        List<double>.filled(kEmbeddingDimensions, 0.31)).buffer.asUint8List();
+    db.execute(
+      'INSERT INTO $kKnowledgeChunksTableName '
+      '(embedding, id, document_name, page, chunk_text, x, y, w, h) '
+      "VALUES (vec_f32(?), 'legacy1', 'SOP-legacy', 3, 'isi lama', 0.1, 0.2, 0.5, 0.3)",
+      [blob],
+    );
+
+    // Migrasi atomik: backfill updated_at=0, tambahkan kolom, rename.
+    migrateKnowledgeChunksTable(db);
+
+    final rows = db.select(
+      'SELECT id, page, updated_at FROM $kKnowledgeChunksTableName',
+    );
+    expect(rows.length, 1);
+    expect(rows.first['id'], 'legacy1');
+    expect(rows.first['updated_at'], 0);
+
+    chunks.insert(KnowledgeChunkRecord(
+      id: 'new1',
+      documentName: 'SOP-new.pdf',
+      page: 1,
+      chunkText: 'baru',
+      x: 0.1,
+      y: 0.2,
+      w: 0.5,
+      h: 0.3,
+      embedding: List<double>.filled(kEmbeddingDimensions, 0.12),
+    ));
+    expect(chunks.getById('new1'), isNotNull);
+    expect(chunks.getById('legacy1'), isNotNull);
   });
 }

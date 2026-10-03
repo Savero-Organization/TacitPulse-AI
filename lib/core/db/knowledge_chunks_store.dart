@@ -74,22 +74,7 @@ Future<Database> initializeKnowledgeChunksDatabase({String? path}) async {
     db.execute(kKnowledgeChunksSchema);
     db.execute(kKnowledgeChunksTombstoneSchema);
     db.execute(kKnowledgeChunksTombstoneIndex);
-    // Rows lama dari skema sebelum kolom updated_at ada butuh migrasi: coba
-    // tambahkan kolomnya. Bila gagal (sqlite-vec tidak mendukung ALTER pada
-    // beberapa versi), baris lama tetap tidak punya updated_at; itu aman —
-    // mereka diabaikan oleh kueri delta (updated_at IS NULL).
-    try {
-      final cols =
-          db.select("PRAGMA table_info($kKnowledgeChunksTableName)");
-      final hasUpdatedAt = cols.any((r) => r['name'] == 'updated_at');
-      if (!hasUpdatedAt) {
-        db.execute(
-          'ALTER TABLE $kKnowledgeChunksTableName ADD COLUMN updated_at INTEGER',
-        );
-      }
-    } catch (_) {
-      // Migrasi opsional; abaikan bila tidak didukung.
-    }
+    migrateKnowledgeChunksTable(db);
     // Mode WAL: siap bila kelak ada koneksi/reader kedua (unlock paralelisme
     // reader-writer tanpa memblokir). Sekarang masih satu koneksi, jadi
     // murni persiapan — `synchronous=FULL` default tidak ikut berubah.
@@ -99,6 +84,60 @@ Future<Database> initializeKnowledgeChunksDatabase({String? path}) async {
     // Bila pembuatan skema gagal (mis. file korup), tutup handle agar fd
     // tidak bocor, lalu teruskan exception aslinya.
     db.close();
+    rethrow;
+  }
+}
+
+/// Migrasi skema lama `knowledge_chunks` (tanpa kolom `updated_at`) ke skema
+/// baru.
+///
+/// sqlite-vec menolak `ALTER TABLE` pada tabel virtual `vec0`, jadi kolom
+/// baru tidak bisa ditambahkan langsung. Yang ditempuh: membuat tabel vec0
+/// baru berisi skema lengkap (dengan `updated_at`), menyalin seluruh baris
+/// lama (backfill `updated_at = 0` sehingga baris tersebut diperlakukan
+/// sebagai "terakhir disinkronkan sebelum era kolom"), menghapus tabel
+/// lama, lalu rename tabel baru ke nama asli. Semua dalam satu transaksi —
+/// gagal di mana pun, seluruh perubahan di-ROLLBACK dan exception diteruskan
+/// (gagal cepat, tidak ada perbedaan diam-diam antara skema dan kueri).
+void migrateKnowledgeChunksTable(Database db) {
+  // Probe: bila `updated_at` sudah ada (fresh install atau sudah dimigrasi),
+  // tidak ada yang perlu dilakukan.
+  try {
+    db.select('SELECT updated_at FROM $kKnowledgeChunksTableName LIMIT 1');
+    return;
+  } catch (_) {
+    // Kolom belum ada → lanjutkan migrasi.
+  }
+
+  db.execute('BEGIN');
+  try {
+    db.execute('''
+CREATE VIRTUAL TABLE ${kKnowledgeChunksTableName}__new USING vec0(
+  embedding float[$kEmbeddingDimensions] distance_metric=cosine,
+  +id TEXT,
+  +document_name TEXT,
+  +page INTEGER,
+  +chunk_text TEXT,
+  +x double,
+  +y double,
+  +w double,
+  +h double,
+  +updated_at INTEGER
+);
+''');
+    db.execute(
+      'INSERT INTO ${kKnowledgeChunksTableName}__new '
+      '(embedding, id, document_name, page, chunk_text, x, y, w, h, updated_at) '
+      'SELECT embedding, id, document_name, page, chunk_text, x, y, w, h, 0 '
+      'FROM $kKnowledgeChunksTableName',
+    );
+    db.execute('DROP TABLE $kKnowledgeChunksTableName');
+    db.execute(
+      'ALTER TABLE ${kKnowledgeChunksTableName}__new RENAME TO $kKnowledgeChunksTableName',
+    );
+    db.execute('COMMIT');
+  } catch (_) {
+    db.execute('ROLLBACK');
     rethrow;
   }
 }

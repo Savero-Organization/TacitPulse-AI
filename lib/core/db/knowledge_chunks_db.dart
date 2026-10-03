@@ -52,6 +52,7 @@ class KnowledgeChunkRecord {
     double? h,
     List<double>? embedding,
     DateTime? updatedAt,
+    double? distance,
   }) =>
       KnowledgeChunkRecord(
         id: id ?? this.id,
@@ -64,6 +65,7 @@ class KnowledgeChunkRecord {
         h: h ?? this.h,
         embedding: embedding ?? this.embedding,
         updatedAt: updatedAt ?? this.updatedAt,
+        distance: distance ?? this.distance,
       );
 
   Map<String, dynamic> toJson() => {
@@ -76,7 +78,7 @@ class KnowledgeChunkRecord {
         'w': w,
         'h': h,
         'embedding': embedding,
-        'updatedAt': updatedAt.toIso8601String(),
+        'updatedAt': updatedAt.toUtc().toIso8601String(),
       };
 
   factory KnowledgeChunkRecord.fromJson(Map<String, dynamic> json) {
@@ -91,7 +93,7 @@ class KnowledgeChunkRecord {
       h: (json['h'] as num).toDouble(),
       embedding:
           (json['embedding'] as List).map((e) => (e as num).toDouble()).toList(),
-      updatedAt: DateTime.parse(json['updatedAt'] as String),
+      updatedAt: DateTime.parse(json['updatedAt'] as String).toUtc(),
     );
   }
 }
@@ -205,7 +207,7 @@ class KnowledgeChunksDb {
     _db.execute(
       'UPDATE $kKnowledgeChunksTableName '
       'SET embedding = vec_f32(?), document_name = ?, page = ?, '
-      'chunk_text = ?, x = ?, y = ?, w = ?, h = ? , updated_at = ? '
+      'chunk_text = ?, x = ?, y = ?, w = ?, h = ?, updated_at = ? '
       'WHERE id = ?',
       [
         _encodeVector(chunk.embedding),
@@ -235,24 +237,29 @@ class KnowledgeChunksDb {
   /// Melempar [ArgumentError] bila `id` kosong.
   bool delete(String id) {
     _validateId(id, 'id');
-    _db.execute(
-      'DELETE FROM $kKnowledgeChunksTableName WHERE id = ?',
-      [id],
-    );
-    final deleted = _db.updatedRows > 0;
-    // Tulis tombstone supaya peer bisa menarik hapusannya via delta sync.
-    if (deleted) {
-      try {
+    // Pastikan tabel tombstone ada (skema baru diinisialisasi dengan CREATE
+    // TABLE IF NOT EXISTS; jalur ini melayani koneksi yang dibuka langsung).
+    _db.execute(kKnowledgeChunksTombstoneSchema);
+    // Hapus + catat tombstone atomik: gagal di salah satu → rollback keduanya.
+    _db.execute('BEGIN');
+    try {
+      _db.execute(
+        'DELETE FROM $kKnowledgeChunksTableName WHERE id = ?',
+        [id],
+      );
+      final deleted = _db.updatedRows > 0;
+      if (deleted) {
         _db.execute(
-          'INSERT INTO knowledge_chunk_tombstones(id, deleted_at) values (?, ?)',
+          'INSERT INTO knowledge_chunk_tombstones(id, deleted_at) VALUES (?, ?)',
           [id, DateTime.now().millisecondsSinceEpoch],
         );
-      } catch (_) {
-        // Tabel tombstone mungkin belum ada pada skema usang — penghapusan
-        // tetap dianggap berhasil di sisi pemanggil.
       }
+      _db.execute('COMMIT');
+      return deleted;
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
     }
-    return deleted;
   }
 
   /// Chunk yang diperbarui (updated_at) lebih baru dari [since], urut
@@ -283,6 +290,25 @@ class KnowledgeChunksDb {
       return rows.map((row) => row['id'] as String).toList();
     } catch (_) {
       return const <String>[];
+    }
+  }
+
+  /// `deleted_at` terbesar di atas [since], atau null bila tidak ada. Dipakai
+  /// synchronizer untuk menghitung watermark aman setelah delta.
+  DateTime? getTombstonesMaxDeletedAtSince(DateTime since) {
+    final sinceMs = since.millisecondsSinceEpoch;
+    try {
+      final row = _db.select(
+        'SELECT MAX(deleted_at) AS maxDeletedAt '
+        'FROM knowledge_chunk_tombstones WHERE deleted_at > ?',
+        [sinceMs],
+      ).first;
+      final maxMs = row['maxDeletedAt'] as int?;
+      return maxMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(maxMs);
+    } catch (_) {
+      return null;
     }
   }
 

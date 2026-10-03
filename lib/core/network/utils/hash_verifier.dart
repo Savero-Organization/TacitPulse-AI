@@ -32,7 +32,9 @@ Future<String> computeSha256(
 
 /// Memverifikasi bahwa hash SHA-256 file cocok dengan [expectedHash].
 ///
-/// Perbandingan hex bersifat case-insensitive dan spasi diabaikan.
+/// Perbandingan hex bersifat case-insensitive; whitespace di ujung awal/akhir
+/// [expectedHash] diabaikan (spasi dalam di tengah masih dianggap tidak
+/// sama — bersihkan sebelum dibandingkan bila perlu).
 /// Mengembalikan `false` bila file hilang/tidak terbaca atau terjadi
 /// kesalahan lain selama hashing (tidak melempar).
 Future<bool> verifyFileHash(File file, String expectedHash) async {

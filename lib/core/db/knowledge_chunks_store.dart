@@ -33,8 +33,23 @@ CREATE VIRTUAL TABLE IF NOT EXISTS $kKnowledgeChunksTableName USING vec0(
   +x double,
   +y double,
   +w double,
-  +h double
+  +h double,
+  +updated_at INTEGER
 );
+''';
+
+/// Tabel tombstone untuk penghapusan chunk (dipakai delta synchronizer).
+const String kKnowledgeChunksTombstoneSchema = '''
+CREATE TABLE IF NOT EXISTS knowledge_chunk_tombstones(
+  id TEXT,
+  deleted_at INTEGER
+);
+''';
+
+/// Indeks pada tombstone agar query Delta "deleted after T" tetap cepat.
+const String kKnowledgeChunksTombstoneIndex = '''
+CREATE INDEX IF NOT EXISTS idx_tombstones_deleted_at
+ON knowledge_chunk_tombstones(deleted_at);
 ''';
 
 /// Initialisasi database SQLite lokal untuk knowledge store vektor.
@@ -57,6 +72,24 @@ Future<Database> initializeKnowledgeChunksDatabase({String? path}) async {
   final db = openDatabaseWithVec(dbPath);
   try {
     db.execute(kKnowledgeChunksSchema);
+    db.execute(kKnowledgeChunksTombstoneSchema);
+    db.execute(kKnowledgeChunksTombstoneIndex);
+    // Rows lama dari skema sebelum kolom updated_at ada butuh migrasi: coba
+    // tambahkan kolomnya. Bila gagal (sqlite-vec tidak mendukung ALTER pada
+    // beberapa versi), baris lama tetap tidak punya updated_at; itu aman —
+    // mereka diabaikan oleh kueri delta (updated_at IS NULL).
+    try {
+      final cols =
+          db.select("PRAGMA table_info($kKnowledgeChunksTableName)");
+      final hasUpdatedAt = cols.any((r) => r['name'] == 'updated_at');
+      if (!hasUpdatedAt) {
+        db.execute(
+          'ALTER TABLE $kKnowledgeChunksTableName ADD COLUMN updated_at INTEGER',
+        );
+      }
+    } catch (_) {
+      // Migrasi opsional; abaikan bila tidak didukung.
+    }
     // Mode WAL: siap bila kelak ada koneksi/reader kedua (unlock paralelisme
     // reader-writer tanpa memblokir). Sekarang masih satu koneksi, jadi
     // murni persiapan — `synchronous=FULL` default tidak ikut berubah.

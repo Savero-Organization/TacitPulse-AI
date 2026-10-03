@@ -6,7 +6,7 @@ import 'knowledge_chunks_store.dart';
 
 /// Satu baris tabel `knowledge_chunks` (skema di [kKnowledgeChunksSchema]).
 class KnowledgeChunkRecord {
-  const KnowledgeChunkRecord({
+  KnowledgeChunkRecord({
     required this.id,
     required this.documentName,
     required this.page,
@@ -17,7 +17,8 @@ class KnowledgeChunkRecord {
     required this.h,
     required this.embedding,
     this.distance,
-  });
+    DateTime? updatedAt,
+  }) : updatedAt = updatedAt ?? DateTime.now();
 
   final String id;
   final String documentName;
@@ -36,6 +37,63 @@ class KnowledgeChunkRecord {
   /// Jarak cosine (0 = identik, makin kecil makin mirip).
   /// Hanya terisi pada hasil [KnowledgeChunksDb.search] (query KNN).
   final double? distance;
+
+  /// Waktu terakhir chunk diperbarui; dipakai perbandingan LWW saat merge.
+  final DateTime updatedAt;
+
+  KnowledgeChunkRecord copyWith({
+    String? id,
+    String? documentName,
+    int? page,
+    String? chunkText,
+    double? x,
+    double? y,
+    double? w,
+    double? h,
+    List<double>? embedding,
+    DateTime? updatedAt,
+  }) =>
+      KnowledgeChunkRecord(
+        id: id ?? this.id,
+        documentName: documentName ?? this.documentName,
+        page: page ?? this.page,
+        chunkText: chunkText ?? this.chunkText,
+        x: x ?? this.x,
+        y: y ?? this.y,
+        w: w ?? this.w,
+        h: h ?? this.h,
+        embedding: embedding ?? this.embedding,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'documentName': documentName,
+        'page': page,
+        'chunkText': chunkText,
+        'x': x,
+        'y': y,
+        'w': w,
+        'h': h,
+        'embedding': embedding,
+        'updatedAt': updatedAt.toIso8601String(),
+      };
+
+  factory KnowledgeChunkRecord.fromJson(Map<String, dynamic> json) {
+    return KnowledgeChunkRecord(
+      id: json['id'] as String,
+      documentName: json['documentName'] as String,
+      page: json['page'] as int,
+      chunkText: json['chunkText'] as String,
+      x: (json['x'] as num).toDouble(),
+      y: (json['y'] as num).toDouble(),
+      w: (json['w'] as num).toDouble(),
+      h: (json['h'] as num).toDouble(),
+      embedding:
+          (json['embedding'] as List).map((e) => (e as num).toDouble()).toList(),
+      updatedAt: DateTime.parse(json['updatedAt'] as String),
+    );
+  }
 }
 
 /// Helper SQLite untuk operasi CRUD chunk + pencarian kemiripan
@@ -47,8 +105,12 @@ class KnowledgeChunksDb {
   /// `openDatabaseWithVec`) — skema vec0 sudah terpasang.
   final Database _db;
 
+  /// Akses langsung ke koneksi untuk operasi transaksional/kustom
+  /// (mis. delta synchronizer, vector merger).
+  Database get db => _db;
+
   static const String _columns =
-      'id, document_name, page, chunk_text, x, y, w, h, embedding';
+      'id, document_name, page, chunk_text, x, y, w, h, embedding, updated_at';
 
   /// Membuka database dokumen aplikasi (membuat bila belum ada), memasang
   /// sqlite-vec + skema, lalu mengembalikan helper siap pakai.
@@ -86,8 +148,8 @@ class KnowledgeChunksDb {
     }
     _db.execute(
       'INSERT INTO $kKnowledgeChunksTableName '
-      '(embedding, id, document_name, page, chunk_text, x, y, w, h) '
-      'VALUES (vec_f32(?), ?, ?, ?, ?, ?, ?, ?, ?)',
+      '(embedding, id, document_name, page, chunk_text, x, y, w, h, updated_at) '
+      'VALUES (vec_f32(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         _encodeVector(chunk.embedding),
         chunk.id,
@@ -98,6 +160,7 @@ class KnowledgeChunksDb {
         chunk.y,
         chunk.w,
         chunk.h,
+        chunk.updatedAt.millisecondsSinceEpoch,
       ],
     );
   }
@@ -142,7 +205,7 @@ class KnowledgeChunksDb {
     _db.execute(
       'UPDATE $kKnowledgeChunksTableName '
       'SET embedding = vec_f32(?), document_name = ?, page = ?, '
-      'chunk_text = ?, x = ?, y = ?, w = ?, h = ? '
+      'chunk_text = ?, x = ?, y = ?, w = ?, h = ? , updated_at = ? '
       'WHERE id = ?',
       [
         _encodeVector(chunk.embedding),
@@ -153,6 +216,7 @@ class KnowledgeChunksDb {
         chunk.y,
         chunk.w,
         chunk.h,
+        chunk.updatedAt.millisecondsSinceEpoch,
         chunk.id,
       ],
     );
@@ -175,7 +239,51 @@ class KnowledgeChunksDb {
       'DELETE FROM $kKnowledgeChunksTableName WHERE id = ?',
       [id],
     );
-    return _db.updatedRows > 0;
+    final deleted = _db.updatedRows > 0;
+    // Tulis tombstone supaya peer bisa menarik hapusannya via delta sync.
+    if (deleted) {
+      try {
+        _db.execute(
+          'INSERT INTO knowledge_chunk_tombstones(id, deleted_at) values (?, ?)',
+          [id, DateTime.now().millisecondsSinceEpoch],
+        );
+      } catch (_) {
+        // Tabel tombstone mungkin belum ada pada skema usang — penghapusan
+        // tetap dianggap berhasil di sisi pemanggil.
+      }
+    }
+    return deleted;
+  }
+
+  /// Chunk yang diperbarui (updated_at) lebih baru dari [since], urut
+  /// ascending. Dipakai delta synchronizer. Tidak memuat baris lama yang
+  /// updated_at-nya masih NULL (skema usang sebelum migrasi).
+  List<KnowledgeChunkRecord> getUpdatedSince(DateTime since, {int limit = 500}) {
+    final sinceMs = since.millisecondsSinceEpoch;
+    final rows = _db.select(
+      'SELECT $_columns FROM $kKnowledgeChunksTableName '
+      'WHERE updated_at IS NOT NULL AND updated_at > ? '
+      'ORDER BY updated_at ASC LIMIT ?',
+      [sinceMs, limit],
+    );
+    return rows.map(_toRecord).toList();
+  }
+
+  /// ID chunk yang dihapus (melalui [delete]) setelah [since]. Kosong bila
+  /// tabel tombstone tidak tersedia (skema usang).
+  List<String> getDeletedIdsSince(DateTime since, {int limit = 500}) {
+    final sinceMs = since.millisecondsSinceEpoch;
+    try {
+      final rows = _db.select(
+        'SELECT DISTINCT id FROM knowledge_chunk_tombstones '
+        'WHERE deleted_at > ? '
+        'ORDER BY deleted_at ASC LIMIT ?',
+        [sinceMs, limit],
+      );
+      return rows.map((row) => row['id'] as String).toList();
+    } catch (_) {
+      return const <String>[];
+    }
   }
 
   // ---- Pencarian kemiripan ------------------------------------------------
@@ -265,6 +373,7 @@ class KnowledgeChunksDb {
 
   static KnowledgeChunkRecord _toRecord(Row row) {
     final distance = row['distance'];
+    final updatedAtMs = row['updated_at'] as int?;
     return KnowledgeChunkRecord(
       id: row['id'] as String,
       documentName: row['document_name'] as String,
@@ -276,6 +385,9 @@ class KnowledgeChunksDb {
       h: (row['h'] as num).toDouble(),
       embedding: _decodeVector(row['embedding'] as Uint8List),
       distance: distance == null ? null : (distance as num).toDouble(),
+      updatedAt: updatedAtMs == null
+          ? DateTime.fromMillisecondsSinceEpoch(0)
+          : DateTime.fromMillisecondsSinceEpoch(updatedAtMs),
     );
   }
 }

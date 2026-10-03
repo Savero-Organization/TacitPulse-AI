@@ -16,16 +16,6 @@ const String kRagSystemPrompt =
     'Jangan menebak fakta yang tidak ada di referensi; bila referensi tidak '
     'memuat jawabannya, katakan dengan jelas bahwa dokumen tidak memuatnya.';
 
-/// Stop-token bawaan (Qwen/ChatML) yang menghentikan pembuatan di luar
-/// giliran asisten — dipakai LLMInference untuk menekan runaway output.
-const List<String> kRagStopTokens = [
-  '<|im_end|>',
-  '<|im_start|>',
-  '<|im_end_of_text|>',
-  '<|endoftext|>',
-  '</s>',
-];
-
 /// Builder prompt ChatML untuk RAG.
 class PromptBuilder {
   const PromptBuilder({this.systemPrompt = kRagSystemPrompt});

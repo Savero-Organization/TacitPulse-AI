@@ -50,7 +50,6 @@ void main() {
 
   test('system prompt memaksa hanya menjawab dari referensi', () {
     expect(kRagSystemPrompt, contains('HANYA'));
-    expect(kRagStopTokens, contains('<|im_end|>'));
   });
 
   test('query kosong → ArgumentError', () {

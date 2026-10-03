@@ -9,13 +9,13 @@
 import '../db/knowledge_chunks_db.dart';
 import '../native/llama_bridge.dart' show getEmbedding;
 
-/// Hasil retrieval: satu record chunk + skor kemiripan cosine (0..1).
+/// Hasil retrieval: satu record chunk + skor kemiripan cosine ([-1, 1]).
 class RetrievedChunk {
   const RetrievedChunk({required this.record, required this.similarity});
 
   final KnowledgeChunkRecord record;
 
-  /// 1 - jarak cosine dari query (0 = sama sekali berbeda, 1 = identik).
+  /// 1 - jarak cosine dari query; rentang [-1, 1] (1 = identik, -1 = berlawanan arah).
   final double similarity;
 }
 
@@ -36,15 +36,14 @@ class RagRetrieverService {
     KnowledgeChunksDb? db,
     ChunkSearch? search,
     QueryEmbedder? embedder,
-  })  : assert(
-          db != null || search != null,
-          'butuh salah satu: db atau search',
-        ),
-        _search = search ?? db!.search,
+  })  : _search = search ?? (db ?? _missingDb()).search,
         _embed = embedder ?? getEmbedding;
 
   final ChunkSearch _search;
   final QueryEmbedder _embed;
+
+  static KnowledgeChunksDb _missingDb() =>
+      throw ArgumentError('butuh salah satu: db atau search');
 
   /// Kembalikan [topK] chunk paling relevan untuk [query].
   ///

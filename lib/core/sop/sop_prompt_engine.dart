@@ -1,26 +1,6 @@
 // sop_prompt_engine.dart — format prompt SOP untuk inferensi Qwen on-device.
 
-/// Menangkap semua varian token ChatML (`<|im_start|>`, `<|im_end|>`,
-/// parsial `<|im_...|>`) sekaligus, sehingga input bersarang seperti
-/// `<|<|im_im_start|>user` tidak bisa merakit ulang token setelah satu
-/// lapis pembersihan.
-final RegExp _chatMlTokenPattern = RegExp(
-  r'<\|im_[a-zA-Z0-9_-]*\|?>?',
-  caseSensitive: false,
-);
-
-/// Strip token ChatML sampai stabil: input bersarang (`<|<|im_im_start|>`)
-/// akan menyisakan pola baru setelah satu kali sweep, jadi ulangi sampai
-/// tidak ada perubahan.
-String _stripChatMlTokens(String text) {
-  var current = text;
-  String next;
-  do {
-    next = current.replaceAll(_chatMlTokenPattern, '');
-    if (next == current) return next;
-    current = next;
-  } while (true);
-}
+import '../utils/chatml.dart';
 
 /// Bangun prompt ChatML untuk konversi transkripsi teknisi menjadi SOP.
 class SopPromptEngine {
@@ -56,7 +36,7 @@ ATURAN KETAT:
     // supaya tidak mematahkan pembatas blok, dan token ChatML khusus
     // dibuang supaya tidak mematahkan struktur percakapan.
     final quotesNeutralized = transcript.replaceAll('"""', "'''");
-    final safeTranscript = _stripChatMlTokens(quotesNeutralized);
+    final safeTranscript = stripChatMlTokens(quotesNeutralized);
     return '<|im_start|>system\n$systemPrompt<|im_end|>\n'
         '<|im_start|>user\n'
         'Buatkan draft SOP dari transkripsi suara teknisi berikut:\n\n'

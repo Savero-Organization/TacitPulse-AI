@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../core/native/llm_inference.dart';
 import '../../../core/rag/intent_router.dart';
+import '../../../core/utils/chatml.dart';
 import '../../../core/utils/thinking_utils.dart';
 import '../../mock_data.dart';
 
@@ -45,15 +46,15 @@ String buildChatContextBody(String question, List<ChatMessage> history) {
   final buf = StringBuffer();
   for (final m in recent) {
     if (m.isStreaming) continue;
-    final content = (m.role == ChatRole.assistant
+    final content = stripChatMlTokens((m.role == ChatRole.assistant
             ? stripThinkingFromHistory(m.text)
             : m.text)
-        .trim();
+        .trim());
     if (content.isEmpty) continue;
     buf.write('<|im_start|>${m.role == ChatRole.user ? 'user' : 'assistant'}\n'
         '$content<|im_end|>\n');
   }
-  buf.write('<|im_start|>user\n${question.trim()}<|im_end|>\n');
+  buf.write('<|im_start|>user\n${stripChatMlTokens(question.trim())}<|im_end|>\n');
   return buf.toString();
 }
 

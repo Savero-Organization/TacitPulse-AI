@@ -46,6 +46,9 @@ dependencies:
   
   record: ^7.1.1
   nsd: ^5.0.1
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:

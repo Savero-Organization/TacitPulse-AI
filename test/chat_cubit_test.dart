@@ -329,6 +329,46 @@ void main() {
     });
   });
 
+  group('streaming full-buffer sanitization', () {
+    test('fragmented ChatML tokens dipotong sebagai satu kesatuan', () async {
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable([
+          'Hasil analisis: ok.',
+          ' <|',
+          'im',
+          '_end|>',
+        ]);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('cek');
+      await pumpEventQueue();
+
+      final assistant = assistantMessage(cubit);
+      expect(assistant.text, 'Hasil analisis: ok.');
+      expect(assistant.text, isNot(contains('<|im')));
+      expect(assistant.text, isNot(contains('_end')));
+
+      await cubit.close();
+    });
+
+    test('streaming <think> menyimpan reasoning & answer terpisah', () async {
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable([
+          '<think>cek log sensor</think>Jawaban final',
+        ]);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('cek');
+      await pumpEventQueue();
+
+      final assistant = assistantMessage(cubit);
+      expect(thinkingContent(assistant.text), 'cek log sensor');
+      expect(answerContent(assistant.text), 'Jawaban final');
+
+      await cubit.close();
+    });
+  });
+
   group('special token sanitasi per-piece', () {
     test('token ChatML utuh & parsial di potongan stream tidak bocor ke UI',
         () async {

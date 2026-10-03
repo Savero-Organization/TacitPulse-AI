@@ -104,6 +104,7 @@ class ChatCubit extends Cubit<ChatState> {
   Timer? _tokenTimer;
   StreamSubscription<String>? _llmSub;
   int _wordIndex = 0;
+  String _fullText = '';
 
   // State tracking blok berpikir untuk guard anti-loop & budget token.
   bool _thinkOpen = false;
@@ -257,6 +258,7 @@ class ChatCubit extends Cubit<ChatState> {
     _thinkBuffer = '';
     _thinkWatch = null;
     _thinkingSeconds = 0;
+    _fullText = '';
     _llmSub?.cancel();
     final assistantId = state.messages.lastWhere((m) => m.isStreaming).id;
     final contextBody = buildChatContextBody(question, history);
@@ -276,11 +278,17 @@ class ChatCubit extends Cubit<ChatState> {
             final clean = stripSpecialTokens(piece);
             if (clean.isEmpty) return;
             final injected = _trackThinking(clean);
+            // Simpan buffer mentah TANPA stripping — memangkas token parsial
+            // secara menyilang piece akan merusak rangkaian token.
+            _fullText += piece;
+            if (injected != null) _fullText += injected;
+            // Full-buffer sanitization per tick: buang token ChatML dari
+            // keutuhan buffer, bukan hanya dari piece yang bertabrakan.
+            final sanitizedFull =
+                stripChatMlTokens(stripSpecialTokens(_fullText)).trimRight();
             final msgs = state.messages.map((m) {
               if (m.id != assistantId) return m;
-              var text = m.text.isEmpty ? clean : m.text + clean;
-              if (injected != null) text = '$text$injected';
-              return m.copyWith(text: text);
+              return m.copyWith(text: sanitizedFull);
             }).toList();
             emit(state.copyWith(messages: msgs));
           },
@@ -379,7 +387,9 @@ class ChatCubit extends Cubit<ChatState> {
         // terpisah) dari teks final; blok berpikir berisi konten tidak
         // disentuh. Tanpa trim — menghilangkan whitespace eksekusi ubah
         // penggabungan teks dan sembunyikan bagian yang masih streaming.
+        text = stripChatMlTokens(stripSpecialTokens(text));
         text = removeEmptyThinkingBlocks(text);
+        text = text.trimRight();
       } else {
         text = '$text\n\n⚠️ Gagal memproses. Periksa log untuk detail.';
       }

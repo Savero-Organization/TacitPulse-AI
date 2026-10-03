@@ -26,7 +26,7 @@ String stripChatMlTokens(String text) {
   // `<|im_start|...`) hingga akhir teks — token ChatML, yang bersifat
   // stop-sequence tidak boleh terbawa ke jawaban.
   return current.replaceAll(
-    RegExp(r'<\|im(_end|_start)?>?.*$'),
+    RegExp(r'\s*<\|im(_end|_start)?>?.*$', dotAll: true),
     '',
   );
 }

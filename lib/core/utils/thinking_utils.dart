@@ -206,8 +206,10 @@ String stripSpecialTokens(String input) {
     cleaned = cleaned.substring(0, idx);
   }
   // Potong ekor token kontrol ChatML parsial/utuh hingga ujung teks/stream.
+  // dotAll:true agar `.` menjangkau newline; whitespace sebelum token ikut
+  // di-strip agar hasil merendahkan jejak stop-token tidak tersamar.
   cleaned = cleaned.replaceAll(
-    RegExp(r'<\|im(_end|_start)?>?.*$', multiLine: false),
+    RegExp(r'\s*<\|im(_end|_start)?>?.*$', dotAll: true),
     '',
   );
   return cleaned;

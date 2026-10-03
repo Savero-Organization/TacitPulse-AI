@@ -163,4 +163,17 @@ void main() {
     expect(flatten, contains('"AA-221"'));
     expect(flatten, isNot(contains('**')));
   });
+  testWidgets('<think> merender accordion reasoning dan answer body',
+      (tester) async {
+    const text = '<think>cek log sensor</think>Jawaban final';
+    await tester.pumpWidget(_app(_assistantMessage(text: text)));
+
+    expect(find.textContaining('💡 Proses Berpikir'), findsOneWidget);
+    expect(find.text('Jawaban final'), findsOneWidget);
+    expect(find.text('cek log sensor'), findsNothing);
+
+    await tester.tap(find.textContaining('💡 Proses Berpikir'));
+    await tester.pumpAndSettle();
+    expect(find.text('cek log sensor'), findsOneWidget);
+  });
 }

@@ -11,18 +11,31 @@ class TransferProgressCard extends StatelessWidget {
     required this.controller,
     this.onCancel,
     this.onRetry,
+    this.onPauseToggle,
   });
 
   final TransferStatusController controller;
   final void Function()? onCancel;
   final void Function()? onRetry;
 
+  /// Dipanggil saat Pause/Resume ditekan dengan nilai `paused` baru. Pemilik
+  /// controller sebaiknya menerapkan status ini (mis. menghentikan I/O asli)
+  /// agar state tidak langsung ditimpa update berikutnya. Bila null, kartu
+  /// memutasi controller sendiri (mode demo).
+  final void Function(bool paused)? onPauseToggle;
+
   void _togglePause() {
     final s = controller.value;
     if (s.state == TransferState.transferring) {
-      controller.value = s.copyWith(state: TransferState.paused);
+      onPauseToggle?.call(true);
+      if (onPauseToggle == null) {
+        controller.value = s.copyWith(state: TransferState.paused);
+      }
     } else if (s.state == TransferState.paused) {
-      controller.value = s.copyWith(state: TransferState.transferring);
+      onPauseToggle?.call(false);
+      if (onPauseToggle == null) {
+        controller.value = s.copyWith(state: TransferState.transferring);
+      }
     }
   }
 

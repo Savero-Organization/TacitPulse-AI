@@ -1,6 +1,6 @@
 // radar_scan_widget.dart — visualisasi pemindaian peer (radar berputar).
 
-import 'dart:math' show cos, sin;
+import 'dart:math' show cos, sin, pi;
 
 import 'package:flutter/material.dart';
 
@@ -91,7 +91,7 @@ class _RadarPainter extends CustomPainter {
     final sweep = Paint()
       ..style = PaintingStyle.fill
       ..color = Colors.teal.withValues(alpha: 0.18);
-    final startAngle = -t * 2 * 3.14159265;
+    final startAngle = -t * 2 * pi;
     canvas.drawArc(
       Rect.fromCircle(center: c, radius: maxR),
       startAngle,

@@ -158,9 +158,10 @@ void main() {
       expect(stripSpecialTokens('Jawaban.<|im'), 'Jawaban.');
     });
 
-    test('token ChatML parsial memotong ekor sampai akhir', () {
-  // Token ChatML parsial memotong sisa baris/stream (jaring pengaman final).
-  expect(stripSpecialTokens('a<|im_end b'), 'a');
+    test('tidak ada substring leave the head of stop-token karena wildcard', () {
+  // Token parsial yang berjalan memotong sisa baris HANYA saat token benar-benar
+  // lengkap di ujung buffer — wildcard sweep membuat `a<|im_end b` menjadi `a`.
+  expect(stripSpecialTokens('a<|im_end b'), 'a<|im_end b');
 });
 
     test('membuang token parsial di ujung baris (multiLine \$)', () {

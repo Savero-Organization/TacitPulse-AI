@@ -113,6 +113,9 @@ set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LLAMA_INSTALL OFF CACHE BOOL "" FORCE)
 
+# Enable Vulkan backend for llama.cpp/ggml before configuring llama.cpp.
+set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+
 # Static archives need -fPIC to link into the shared libtacit_llama.so.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_subdirectory(${LLAMA_DIR} llama_build)

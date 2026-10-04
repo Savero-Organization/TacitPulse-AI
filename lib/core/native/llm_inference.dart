@@ -355,12 +355,18 @@ class LLMInference {
   /// [contextDocs] (hasil routing RAG) disisipkan sebagai blok referensi
   /// di prompt sistem — kosong bila tidak ada context.
   String _buildChatPrompt(String system, String user, {String? contextDocs}) {
+    final buf = StringBuffer();
+    // LFM2.5 context sequence MUST begin with BOS <|startoftext|>
+    buf.write('<|startoftext|>');
+    buf.write('<|im_start|>system\n$system');
     final context = contextDocs == null || contextDocs.isEmpty
         ? ''
-        : '\n\nReferensi dokumen (gunakan bila relevan):\n$contextDocs';
-    return '<|im_start|>system\n$system$context<|im_end|>\n'
-        '<|im_start|>user\n$user<|im_end|>\n'
-        '<|im_start|>assistant\n';
+        : '\n\n[Dokumen Referensi]\n$contextDocs';
+    buf.write(context);
+    buf.write('<|im_end|>\n');
+    buf.write('<|im_start|>user\n$user<|im_end|>\n');
+    buf.write('<|im_start|>assistant\n');
+    return buf.toString();
   }
 }
 

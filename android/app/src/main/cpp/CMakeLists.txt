@@ -12,6 +12,9 @@ set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 
 set(LLAMA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp)
 
+# Enable Vulkan backend for llama.cpp / ggml
+set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+
 # Include header llama.cpp & ggml versi terbaru
 include_directories(
     ${LLAMA_DIR}/include

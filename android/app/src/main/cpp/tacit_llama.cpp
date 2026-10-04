@@ -9,11 +9,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "llama.h"
+#include "ggml-backend.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -65,16 +67,32 @@ tacit_model * model_load_internal(const char * model_path) {
         return nullptr;
     }
 
-    // Offload ke GPU bila host punya backend offload (Vulkan/CUDA/ROCm/Metal
-    // yang berhasil probe melalui llama_backend). Kalau tidak, jatuh eksplisit
-    // ke CPU multithreading supaya runtime tidak pernah menabrak pipa Vulkan
-    // yang tidak ada — n_gpu_layers = 99 adalah batas atas, bukan asumsi
-    // perangkat.
-    const bool gpu_offload = llama_supports_gpu_offload();
+    // Hierarki offload deterministik: discrete GPU > iGPU > CPU.
+    // Pilih backend device first supaya tidak memaksa Vulkan/QVM saat host
+    // tidak punya driver yang sukses probe melalui llama_backend.
+    ggml_backend_dev_t preferred_dev =
+        ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+    const char * dev_label = "Discrete GPU";
+    if (preferred_dev == nullptr) {
+        preferred_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU);
+        dev_label = "iGPU";
+    }
+    bool gpu_offload = preferred_dev != nullptr;
+
     llama_model_params mparams = llama_model_default_params();
+    // `devices` array dipakai bila set agar prioritas deterministic.
+    ggml_backend_dev_t * selected_devices = nullptr;
+    if (preferred_dev != nullptr) {
+        selected_devices = new (std::nothrow) ggml_backend_dev_t[2]{
+            preferred_dev, nullptr};
+        mparams.devices = selected_devices;
+    }
     mparams.n_gpu_layers = gpu_offload ? 99 : 0;
-    if (!gpu_offload) {
-        LOGW("No GPU offload backend detected — CPU fallback mode.");
+
+    if (gpu_offload) {
+        LOGI("offload priority: %s via ggml_backend", dev_label);
+    } else {
+        LOGW("No GPU/iGPU backend detected — CPU fallback mode.");
     }
 
     h->model = llama_model_load_from_file(model_path, mparams);
@@ -82,7 +100,11 @@ tacit_model * model_load_internal(const char * model_path) {
         // Fallback keras: probe mengatakan ada GPU tetapi load gagal
         // (driver hilang/bug) — coba lagi murni CPU sebelum menyerah.
         LOGW("GPU load failed, retrying CPU-only with n_gpu_layers=0");
+        gpu_offload = false;
         mparams.n_gpu_layers = 0;
+        mparams.devices = nullptr;
+        delete[] selected_devices;
+        selected_devices = nullptr;
         h->model = llama_model_load_from_file(model_path, mparams);
         if (h->model == nullptr) {
             set_error("failed to load GGUF model (GPU and CPU fallback)");
@@ -91,9 +113,13 @@ tacit_model * model_load_internal(const char * model_path) {
         }
     } else if (h->model == nullptr) {
         set_error("failed to load GGUF model");
+        delete[] selected_devices;
         delete h;
         return nullptr;
     }
+
+    // Bebaskan temporary device-selection setelah load.
+    delete[] selected_devices;
 
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = kDefaultNContext;

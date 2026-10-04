@@ -6,6 +6,14 @@
 /// parsial `<|im_...|>`) sekaligus, sehingga input bersarang seperti
 /// `<|<|im_im_start|>user` tidak bisa merakit ulang token setelah satu
 /// lapis pembersihan.
+const _kCompleteControlTokens = <String>[
+  '<|im_end|>',
+  '<|im_start|>',
+  '<|im_end_of_text|>',
+  '<|endoftext|>',
+  '<|startoftext|>',
+];
+
 final RegExp chatMlTokenPattern = RegExp(
   r'<\|im_[a-zA-Z0-9_-]*\|?>?',
   caseSensitive: false,
@@ -22,12 +30,11 @@ String stripChatMlTokens(String text) {
     if (next == current) break;
     current = next;
   } while (true);
-  // Potong ekor token kontrol parsial/utuh (`<|im`, `<|im_end`, `<|im_end|>`,
-  // `<|im_start|...`, `<|endoftext`) hingga akhir teks — tanpa swallowing
-  // baris sebelumnnya karena greedy `.*` dibatasi baris (multiLine: false).
-  return current.replaceAll(
-    RegExp(r'\s*<\|(im(_end|_start|_of_text)?|endoftext)>?.*$',
-        multiLine: false),
-    '',
-  );
+  // Tanpa wildcard sweep: hanya ganti token kontrol lengkap. Stripping wildcard
+  // sebelumnya (line-bounded `.*$`) menghapus semua teks setelah token —
+  // merusak multiline completions across boundaries.
+  for (final token in _kCompleteControlTokens) {
+    current = current.replaceAll(token, '');
+  }
+  return current;
 }

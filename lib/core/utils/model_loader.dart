@@ -103,6 +103,34 @@ class ModelManager {
   static const double defaultModelSizeMb = 229.0;
 
   // ---------------------------------------------------------------------------
+  // Tier 1 — kandidat direct multilingual execution (opsional).
+  //
+  // Bila file Qwen 3.5 0.8B Q4_K_M tersedia di device, model itu diprioritaskan
+  // (Tier 1: prompt langsung, tanpa middleware terjemahan). Kalau tidak ada,
+  // app tetap memakai [defaultModelName] (LFM2.5-350M) — tidak ada unduhan
+  // otomatis, jadi perilaku offline default tidak berubah.
+  // ---------------------------------------------------------------------------
+
+  /// Nama file kandidat Tier 1 (Qwen 3.5 0.8B Q4_K_M).
+  static const String tier1ModelName = 'Qwen3.5-0.8B-Q4_K_M.gguf';
+
+  /// Alias nama file yang tetap dikenali sebagai kandidat Tier 1.
+  ///
+  /// Distribusi Qwen 3.5 di luar repo memakai beberapa ejaan nama file;
+  /// semua bentuk ini dipetakan ke kandidat Tier 1 yang sama.
+  static const List<String> tier1ModelAliases = [
+    'Qwen3.5-0.8B-Q4_K_M.gguf',
+    'Qwen3.5-0.8B-Q8_0.gguf',
+    'qwen3.5-0.8b-q4_k_m.gguf',
+  ];
+
+  /// Kunci SharedPreferences untuk opt-in Tier 3 (web translation publik).
+  ///
+  /// Default `false` — perangkat tetap fully on-device sampai teknisi
+  /// benar-benar mengaktifkan fallback jaringan.
+  static const webTranslationEnabledKey = 'web_translation_enabled';
+
+  // ---------------------------------------------------------------------------
   // Embedding model (GABUT 30) — kontrak lintas-branch: nama & URL JANGAN
   // diganti tanpa koordinasi (GABUT-23 pipeline & GABUT-25 viewer memakainya).
   // ---------------------------------------------------------------------------
@@ -566,6 +594,69 @@ class ModelManager {
 
     // Tier 4 — tidak tersedia. Serahkan ke pemanggil (download / sync sheet).
     return null;
+  }
+
+  /// Resolusi model untuk Tier 1: utamakan kandidat Qwen 3.5 0.8B (direct
+  /// multilingual execution), jatuh ke [resolveModelPath] (LFM2.5) bila
+  /// kandidat Tier 1 tidak ada / tidak valid.
+  ///
+  /// Mengembalikan `null` hanya bila TIDAK ADA model sama sekali yang valid —
+  /// pemanggil lalu menampilkan model picker.
+  static Future<String?> resolveTier1ModelPath([
+    String fallbackFileName = defaultModelName,
+  ]) async {
+    final tier1 = await resolveModelPath(tier1ModelName);
+    if (tier1 != null) return tier1;
+
+    // Alias nama file (ejaan lain dari model Tier 1 yang sama).
+    for (final alias in tier1ModelAliases) {
+      final found = await resolveModelPath(alias);
+      if (found != null) return found;
+    }
+
+    return resolveModelPath(fallbackFileName);
+  }
+
+  /// Family model yang sedang dimuat (`null` sebelum model ter-resolve).
+  ///
+  /// Dipakai ChatCubit untuk memutuskan apakah prompt bisa dikirim langsung
+  /// (Tier 1, Qwen) atau perlu lewat middleware terjemahan (Tier 2, LFM2.5).
+  static ModelFamily? activeModelFamily;
+
+  /// Family model aktif saat ini (default LFM2.5 bila belum ter-resolve).
+  static ModelFamily get currentModelFamily =>
+      activeModelFamily ?? ModelFamily.lfm2;
+
+  /// Benar bila model aktif adalah Tier 1 (Qwen 3.5 0.8B) yang mendukung
+  /// direct multilingual execution tanpa middleware terjemahan.
+  static bool get isTier1DirectExecution =>
+      currentModelFamily == ModelFamily.qwen;
+
+  /// Baca flag opt-in Tier 3 (web translation publik). Default `false`:
+  /// perangkat fully on-device sampai teknisi mengaktifkannya.
+  static Future<bool> isWebTranslationEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(webTranslationEnabledKey) ?? false;
+  }
+
+  /// Set flag opt-in Tier 3.
+  static Future<void> setWebTranslationEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(webTranslationEnabledKey, enabled);
+  }
+
+  /// Cache sinkron [isWebTranslationEnabled] untuk dipakai di jalur panas
+  /// (translation tidak boleh menunggu I/O disk pada setiap giliran chat).
+  static bool _webTranslationEnabledCache = false;
+
+  /// Nilai cache Tier 3 terakhir yang dibaca (default `false`).
+  static bool get webTranslationEnabled => _webTranslationEnabledCache;
+
+  /// Sinkronkan cache flag Tier 3; dipanggil saat app start & setelah user
+  /// mengubah toggle.
+  static Future<bool> refreshWebTranslationCache() async {
+    _webTranslationEnabledCache = await isWebTranslationEnabled();
+    return _webTranslationEnabledCache;
   }
 
   /// Label ringkas model aktif untuk badge UI.

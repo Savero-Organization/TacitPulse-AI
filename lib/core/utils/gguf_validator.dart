@@ -13,11 +13,25 @@
 //   metadata kv    : (key: GGUF string, value_type: uint32, value)
 //   … tensor info
 //
-// Target yang dicari: LiquidAI LFM2.5-350M-Q4_K_M (default) / LFM2.5-230M-Q4_K_M.
+// Target yang dicari (default): LiquidAI LFM2.5-350M-Q4_K_M /
+// LFM2.5-230M-Q4_K_M. Kabul juga Qwen 3.5 0.8B Q4_K_M sebagai kandidat
+// Tier 1 (direct execution) — lihat [ModelManager.resolveTier1ModelPath].
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
+/// Keluarga model yang dikenali sebagai target chat on-device.
+enum ModelFamily {
+  /// LiquidAI LFM2 / LFM2.5 (ChatML) — default Tier 2.
+  lfm2,
+
+  /// Qwen 2/3 (termasuk Qwen 3.5 0.8B) — kandidat Tier 1 direct execution.
+  qwen,
+
+  /// Tidak dikenali.
+  unknown,
+}
 
 /// Hasil validasi satu file model.
 class GgufValidationResult {
@@ -28,13 +42,15 @@ class GgufValidationResult {
     this.modelName,
     this.fileName,
     this.errorMessage,
+    this.family = ModelFamily.unknown,
   });
 
   /// Benar bila file memulai dengan magic bytes GGUF (`0x46554747`).
   final bool isValidGguf;
 
-  /// Benar bila file terdeteksi sebagai model target LFM2.5
-  /// ukuran 0.8B / 0.5B (via metadata ataupun nama file).
+  /// Benar bila file terdeteksi sebagai model target: LFM2.5 350M/230M
+  /// (default) atau Qwen 3.5 0.8B (kandidat Tier 1) — via metadata
+  /// ataupun nama file.
   final bool isTargetModel;
 
   /// Arsitektur GGUF dari metadata `general.architecture`
@@ -51,6 +67,13 @@ class GgufValidationResult {
   /// penolakan saat tidak.
   final String? errorMessage;
 
+  /// Keluarga model terdeteksi (LFM2 / Qwen / unknown).
+  final ModelFamily family;
+
+  /// True bila file adalah model Tier 1 (Qwen 3.5 0.8B) yang mendukung
+  /// direct multilingual execution tanpa middleware terjemahan.
+  bool get isTier1DirectModel => family == ModelFamily.qwen;
+
   /// Gabungan: aman dipakai langsung sebagai model LLM.
   bool get validForUse => isValidGguf && isTargetModel;
 }
@@ -59,8 +82,11 @@ class GgufValidationResult {
 class GgufValidator {
   GgufValidator._();
 
-  /// Label model target yang diekspektasikan app.
+  /// Label model target default (Tier 2 / direct default).
   static const String targetModelLabel = 'LFM2.5-350M-Q4_K_M';
+
+  /// Label kandidat Tier 1 (direct multilingual execution).
+  static const String tier1ModelLabel = 'Qwen3.5-0.8B-Q4_K_M';
 
   /// Marker arsitektur/nama yang dikenali sebagai LFM2.5 ChatML.
   static const List<String> _lfm2ArchMarks = [
@@ -70,8 +96,14 @@ class GgufValidator {
     'liquid',
   ];
 
+  /// Marker arsitektur/nama Qwen (2.x / 3.x, termasuk Qwen 3.5).
+  static const List<String> _qwenArchMarks = ['qwen2', 'qwen3', 'qwen'];
+
   /// Penanda ukuran target (350M / 230M) pada nama/deskripsi model.
   static const List<String> _targetSizeMarks = ['350m', '230m'];
+
+  /// Penanda ukuran Qwen 3.5 0.8B pada nama/deskripsi model.
+  static const List<String> _tier1SizeMarks = ['0.8b', '0.6b', '800m'];
 
   static const int _ggufMagic = 0x46554747;
 
@@ -243,25 +275,32 @@ class GgufValidator {
       if (architecture != null && modelName != null) break;
     }
 
-    final isLfm2Family = _isLfm2Family(architecture, modelName, fileName);
-    final matchesTargetSize = _matchesTargetSize(modelName, fileName);
-    final isTarget = isLfm2Family && matchesTargetSize;
+    final family = _detectFamily(architecture, modelName, fileName);
+    final combined = '${modelName ?? ''} $fileName'.toLowerCase();
+    final isTarget = switch (family) {
+      ModelFamily.lfm2 => _targetSizeMarks.any(combined.contains),
+      ModelFamily.qwen => _tier1SizeMarks.any(combined.contains),
+      ModelFamily.unknown => false,
+    };
 
     String? message;
     if (!isTarget) {
-      if (!isLfm2Family) {
+      if (family == ModelFamily.unknown) {
         final detected = architecture == null
             ? 'tidak diketahui'
             : '$architecture${modelName == null ? '' : ' ($modelName)'}';
         message =
-            'File GGUF valid, tetapi bukan model LFM2.5. Arsitektur terdeteksi: '
-            '$detected. Diharapkan: $targetModelLabel.';
+            'File GGUF valid, tetapi bukan model target. Arsitektur terdeteksi: '
+            '$detected. Diharapkan: $targetModelLabel atau $tier1ModelLabel.';
       } else {
         final detected = modelName ?? '*tidak terbaca / nama file*';
+        final expected = family == ModelFamily.qwen
+            ? 'ukuran 0.8B'
+            : 'ukuran 350M atau 230M';
         message =
-            'Arsitektur LFM2.5 cocok, tetapi ukuran model tidak sesuai '
-            '(terdeteksi "$detected"). Diharapkan ukuran 0.8B atau 0.5B '
-            'dengan quantisasi keluarga Q4_K_M/Q4 (contoh q4_k_m).';
+            'Arsitektur ${family == ModelFamily.qwen ? 'Qwen' : 'LFM2.5'} cocok, '
+            'tetapi ukuran model tidak sesuai (terdeteksi "$detected"). '
+            'Diharapkan $expected dengan quantisasi keluarga Q4_K_M/Q4.';
       }
     }
 
@@ -272,23 +311,30 @@ class GgufValidator {
       modelName: modelName,
       fileName: fileName,
       errorMessage: message,
+      family: family,
     );
   }
 
-  static bool _isLfm2Family(
+  /// Deteksi keluarga model dari metadata arsitektur, nama model, dan nama file.
+  ///
+  /// Nama file ikut dipakai karena beberapa GGUF distributing tidak menuliskan
+  /// key `general.architecture` (lihat test fallback nama file).
+  static ModelFamily _detectFamily(
     String? architecture,
     String? modelName,
     String fileName,
   ) {
     final arch = (architecture ?? '').toLowerCase();
-    if (_lfm2ArchMarks.any(arch.contains)) return true;
     final combined = '${modelName ?? ''} $fileName'.toLowerCase();
-    return _lfm2ArchMarks.any(combined.contains);
-  }
-
-  static bool _matchesTargetSize(String? modelName, String fileName) {
-    final combined = '${modelName ?? ''} $fileName'.toLowerCase();
-    return _targetSizeMarks.any(combined.contains);
+    if (_lfm2ArchMarks.any(arch.contains) ||
+        _lfm2ArchMarks.any(combined.contains)) {
+      return ModelFamily.lfm2;
+    }
+    if (_qwenArchMarks.any(arch.contains) ||
+        _qwenArchMarks.any(combined.contains)) {
+      return ModelFamily.qwen;
+    }
+    return ModelFamily.unknown;
   }
 
   static int _u32le(Uint8List bytes) =>

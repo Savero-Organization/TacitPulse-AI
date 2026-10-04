@@ -113,6 +113,31 @@ void main() {
       expect(r.validForUse, isTrue);
     });
 
+    test('GGUF Qwen 3.5 0.8B → target Tier 1 (direct execution)', () async {
+      final f = writeFile(
+        'Qwen3.5-0.8B-Q4_K_M.gguf',
+        _buildGguf(architecture: 'qwen3', name: 'Qwen3.5-0.8B'),
+      );
+      final r = await GgufValidator.validateFile(f.path);
+
+      expect(r.isValidGguf, isTrue);
+      expect(r.isTargetModel, isTrue);
+      expect(r.family, ModelFamily.qwen);
+      expect(r.isTier1DirectModel, isTrue);
+      expect(r.validForUse, isTrue);
+    });
+
+    test('LFM2.5 → family lfm2, bukan Tier 1 direct', () async {
+      final f = writeFile(
+        'LFM2.5-350M-Q4_K_M.gguf',
+        _buildGguf(architecture: 'lfm2.5', name: 'LFM2.5-350M-Instruct'),
+      );
+      final r = await GgufValidator.validateFile(f.path);
+
+      expect(r.family, ModelFamily.lfm2);
+      expect(r.isTier1DirectModel, isFalse);
+    });
+
     test('GGUF valid tapi Llama → bukan target', () async {
       final f = writeFile(
         'llama.gguf',

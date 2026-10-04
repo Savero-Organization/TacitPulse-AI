@@ -7,7 +7,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../core/native/llm_inference.dart';
 import '../../../core/rag/intent_router.dart';
+import '../../../core/services/translation_service.dart';
 import '../../../core/utils/chatml.dart';
+import '../../../core/utils/model_loader.dart';
 import '../../../core/utils/thinking_utils.dart';
 import '../../mock_data.dart';
 
@@ -124,14 +126,30 @@ class ChatCubit extends Cubit<ChatState> {
   /// Memastikan native backend+model siap (dipanggil sekali dari UI).
   /// Meng-update [ChatState.isModelLoaded] sesuai hasil inisialisasi.
   Future<void> init() async {
+    // Sinkronkan flag opt-in Tier 3 (default OFF) + tier aktif agar cascade
+    // translation tidak menunggu I/O disk di jalur panas.
+    await ModelManager.refreshWebTranslationCache();
+    _syncTranslationTiers();
+
     if (_llm.isReady) {
       emit(state.copyWith(isModelLoaded: true));
       return;
     }
     final ok = await _llm.initialize();
     if (!isClosed) {
+      _syncTranslationTiers();
       emit(state.copyWith(isModelLoaded: ok, hallucinationGuard: ok));
     }
+  }
+
+  /// Sinkronkan state cascade translation dengan model yang benar-benar aktif.
+  ///
+  /// Tier 1 (Qwen 3.5 0.8B) = direct execution, middleware dilewati.
+  /// Tier 2 (LFM2.5) = middleware NMT/web diteruskan.
+  void _syncTranslationTiers() {
+    TranslationService.instance
+      ..tier1DirectModelActive = ModelManager.isTier1DirectExecution
+      ..webTierEnabled = ModelManager.webTranslationEnabled;
   }
 
   /// Buka ulang LLM setelah user memilih/mengganti custom model path.
@@ -243,10 +261,44 @@ class ChatCubit extends Cubit<ChatState> {
     );
 
     if (_llm.isReady) {
-      _streamNative(question, history, decision: decision);
+      unawaited(_startNativeTurn(question, history, decision: decision));
     } else {
       _streamMock();
     }
+  }
+
+  /// Jalankan satu turn native: siapkan prompt lewat cascade translation
+  /// (Tier 1 direct / Tier 2 NMT offline / Tier 3 web / fallback direct),
+  /// lalu stream jawaban ke [StringBuffer] [_rawBuffer].
+  Future<void> _startNativeTurn(
+    String question,
+    List<ChatMessage> history, {
+    required RoutingDecision decision,
+  }) async {
+    final prompt = await _preparePrompt(question);
+    if (isClosed) return;
+    _streamNative(prompt, history, decision: decision);
+  }
+
+  /// Cascade 3-tier untuk menyiapkan prompt yang dikirim ke LLM.
+  ///
+  /// Tier 1 (Qwen 3.5 0.8B) → prompt apa adanya (tanpa middleware).
+  /// Tier 2 (LFM2.5) → `TranslationService` mencoba NMT offline lalu web
+  /// publik (opt-in); bila semuanya gagal, teks asli diteruskan apa adanya
+  /// sehingga LFM2.5 tetap menjawab (tidak ada bubble kosong).
+  Future<String> _preparePrompt(String question) async {
+    _syncTranslationTiers();
+    final outcome = await TranslationService.instance.translate(
+      question,
+      sourceLang: 'id',
+      targetLang: 'en',
+    );
+    debugPrint(
+      '[Translation] tier=${outcome.tier.label} '
+      'translated=${outcome.wasTranslated}'
+      '${outcome.error == null ? '' : ' reason="${outcome.error}"'}',
+    );
+    return outcome.text;
   }
 
   /// Stream asli: token per-piece dari llama.cpp melalui worker isolate.

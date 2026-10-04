@@ -188,8 +188,12 @@ class LLMInference {
     if (_worker != null) return _ready;
 
     await ModelManager.refreshModelNameCache();
-    final path =
-        await ModelManager.resolveModelPath(modelFile ?? defaultModelFile);
+    // Tanpa modelFile eksplisit: coba kandidat Tier 1 (Qwen 3.5 0.8B) dulu,
+    // lalu jatuh ke LFM2.5 default. Dengan modelFile eksplisit (pilihan user di
+    // picker), path itu yang dipakai apa adanya.
+    final path = modelFile != null
+        ? await ModelManager.resolveModelPath(modelFile)
+        : await ModelManager.resolveTier1ModelPath(defaultModelFile);
     if (path == null) {
       _startupError =
           'Model (${modelFile ?? defaultModelFile}) belum tersedia di device. '
@@ -200,8 +204,11 @@ class LLMInference {
 
     _modelPath = path;
     // Badge UI harus mencerminkan model yang BENAR-BENAR dimuat, bukan
-    // string hardcode lama.
+    // string hardcode lama. Family (Qwen Tier 1 vs LFM2 Tier 2) decided dari
+    // metadata GGUF agar cascade translation memilih jalur yang benar.
     ModelManager.activeModelFileName = path;
+    final validation = await GgufValidator.validateFile(path);
+    ModelManager.activeModelFamily = validation.family;
     _modelFileExists = await File(path).exists();
     if (!_modelFileExists) {
       _startupError = 'Model belum ada: $path';

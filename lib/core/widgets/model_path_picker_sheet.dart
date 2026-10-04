@@ -54,12 +54,20 @@ class _ModelPathPickerSheetState extends State<ModelPathPickerSheet> {
   bool _saved = false;
   String? _pickerHint;
   double _modelSizeMb = ModelManager.defaultModelSizeMb;
+  bool _webTierEnabled = false;
 
   @override
   void initState() {
     super.initState();
     _loadCurrentCustomPath();
     _resolveRemoteSize();
+    _loadWebTier();
+  }
+
+  Future<void> _loadWebTier() async {
+    final enabled = await ModelManager.isWebTranslationEnabled();
+    if (!mounted) return;
+    setState(() => _webTierEnabled = enabled);
   }
 
   @override
@@ -391,11 +399,22 @@ class _ModelPathPickerSheetState extends State<ModelPathPickerSheet> {
                   ),
                 ),
               ],
+              const SizedBox(height: 10),
+              _WebTierToggle(
+                value: _webTierEnabled,
+                onChanged: _setWebTier,
+              ),
             ],
           ),
         );
       },
     );
+  }
+
+  Future<void> _setWebTier(bool value) async {
+    setState(() => _webTierEnabled = value);
+    await ModelManager.setWebTranslationEnabled(value);
+    await ModelManager.refreshWebTranslationCache();
   }
 
   Future<void> _saveAndClose() async {
@@ -687,6 +706,70 @@ class _ValidationFeedback extends StatelessWidget {
             child: Text(
               message,
               style: TextStyle(color: AppColors.textPrimary, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Baris toggle Tier 3 (fallback web translation account-less).
+///
+/// Copy ditampilkan eksplisit karena mengaktifkannya berarti konten chat
+/// teknisi dikirim ke endpoint pihak ketiga — default NONAKTIF.
+class _WebTierToggle extends StatelessWidget {
+  const _WebTierToggle({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.slateMuted.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.surfaceBorder),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Izinkan fallback terjemahan web (Tier 3)',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value
+                      ? 'AKTIF — bila LFM2.5 & NMT offline gagal, pertanyaan '
+                          'dikirim ke layanan web publik (tanpa akun, timeout '
+                          '3 detik).'
+                      : 'Nonaktif — perangkat tetap fully on-device. Query '
+                          'terjemahan hanya lewat NMT offline.',
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 10.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Transform.scale(
+            scale: 0.8,
+            child: Switch(
+              value: value,
+              onChanged: onChanged,
+              activeThumbColor: AppColors.industrialAmber,
             ),
           ),
         ],

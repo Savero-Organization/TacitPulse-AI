@@ -202,6 +202,45 @@ class LLMInference {
       return false;
     }
 
+    return _spawnWorker(path);
+  }
+
+  /// Ganti model yang aktif ke [modelPath] tanpa restart app.
+  ///
+  /// Langkah: hentikan generasi yang sedang berjalan → tear-down worker
+  /// isolate lama (termasuk memori model di C++) → validasi GGUF baru →
+  /// spawn worker isolate baru dengan path tersebut.
+  ///
+  /// Mengembalikan `true` bila worker baru siap. Path tidak valid / gagal
+  /// load → `false` + [startupError] terisi, dan worker lama SUDAH tidak aktif
+  /// (panggil [initialize] untuk kembali ke default).
+  Future<bool> reloadModel(String modelPath) async {
+    // Normalisasi tilde / relatif-POSIX agar sama dengan file yang dipilih di
+    // picker (desktop sering memakai `~/...`).
+    final normalized = GgufValidator.normalizePath(modelPath);
+    final validation = await GgufValidator.validateFile(normalized);
+    if (!validation.validForUse) {
+      _startupError =
+          'Model tidak bisa dimuat: ${validation.errorMessage ?? normalized}';
+      return false;
+    }
+
+    // Stop generasi berjalan supaya tidak ada piece masuk ke worker yang akan
+    // dibunuh.
+    stopGeneration();
+    await _teardownWorker();
+
+    _modelPath = normalized;
+    // Badge + tier translation harus menyusul model yang baru dimuat.
+    ModelManager.activeModelFileName = normalized;
+    ModelManager.activeModelFamily = validation.family;
+
+    return _spawnWorker(normalized);
+  }
+
+  /// Spawn worker isolate + load model pada [path] (dipakai [initialize] dan
+  /// [reloadModel]). Mengembalikan status siap setelah handshake `init`.
+  Future<bool> _spawnWorker(String path) async {
     _modelPath = path;
     // Badge UI harus mencerminkan model yang BENAR-BENAR dimuat, bukan
     // string hardcode lama. Family (Qwen Tier 1 vs LFM2 Tier 2) decided dari
@@ -353,19 +392,28 @@ class LLMInference {
   }
 
   /// Menutup worker: native membebaskan model + backend lalu isolate keluar.
-  Future<void> dispose() async {
-  if (_worker != null) {
-    _requests?.send({'cmd': 'shutdown'});
-    // Berikan jeda untuk gracefully shutdown native C++ memory
-    await Future.delayed(const Duration(milliseconds: 100));
-    _worker?.kill(priority: Isolate.immediate);
-    _worker = null;
+Future<void> dispose() async {
+    await _teardownWorker();
   }
-  _requests = null;
-  _control?.close();
-  _control = null;
-  _ready = false;
-}
+
+  /// Tear-down worker isolate: minta shutdown graceful ke C++ (supaya
+  /// `llama_free` jalan), lalu kill isolate sebagai jaring pengaman.
+  ///
+  /// Dipakai [dispose] dan [reloadModel] — tidak mengubah state lain
+  /// (`_modelPath`, metadata family).
+  Future<void> _teardownWorker() async {
+    if (_worker != null) {
+      _requests?.send({'cmd': 'shutdown'});
+      // Berikan jeda untuk gracefully shutdown native C++ memory
+      await Future.delayed(const Duration(milliseconds: 100));
+      _worker?.kill(priority: Isolate.immediate);
+      _worker = null;
+    }
+    _requests = null;
+    _control?.close();
+    _control = null;
+    _ready = false;
+  }
 
   /// Prompt chat LFM2.5: format im_start / im_end.
   /// [contextDocs] (hasil routing RAG) disisipkan sebagai blok referensi

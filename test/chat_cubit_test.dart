@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tacit_pulse_ai/core/models/chat_message.dart';
 import 'package:tacit_pulse_ai/core/native/llm_inference.dart';
 import 'package:tacit_pulse_ai/core/rag/intent_router.dart';
+import 'package:tacit_pulse_ai/core/services/translation_service.dart';
 import 'package:tacit_pulse_ai/core/utils/thinking_utils.dart';
 import 'package:tacit_pulse_ai/features/chat/cubit/chat_cubit.dart';
 
@@ -43,6 +44,19 @@ class FakeLLM implements LLMInference {
 
   @override
   Future<bool> initialize({String? modelFile}) async => ready;
+
+  /// Path terakhir yang diteruskan ke `reloadModel` (verifikasi reload worker
+  /// isolate memakai path eksplisit dari picker).
+  String? lastReloadedPath;
+
+  /// Hasil yang dikembalikan `reloadModel` (default = ready).
+  bool? reloadResult;
+
+  @override
+  Future<bool> reloadModel(String modelPath) async {
+    lastReloadedPath = modelPath;
+    return reloadResult ?? ready;
+  }
 
   @override
   Future<String?> generate(
@@ -558,4 +572,117 @@ void main() {
       await cubit.close();
     });
   });
+
+  group('loadCustomModel (worker isolate reload)', () {
+    test('path diteruskan ke LLMInference.reloadModel + state ter-emit',
+        () async {
+      final fake = FakeLLM();
+      final cubit = ChatCubit(llm: fake);
+
+      final ok = await cubit.loadCustomModel(
+        '/home/savero/AI/models/Qwen3.5-0.8B-Q4_K_M.gguf',
+      );
+
+      expect(ok, isTrue);
+      expect(fake.lastReloadedPath, contains('Qwen3.5-0.8B-Q4_K_M.gguf'));
+      expect(cubit.state.isModelLoaded, isTrue);
+      expect(cubit.state.status, ChatStatus.idle);
+
+      await cubit.close();
+    });
+
+    test('reload gagal → isModelLoaded false, tidak crash', () async {
+      final fake = FakeLLM()..reloadResult = false;
+      final cubit = ChatCubit(llm: fake);
+
+      final ok = await cubit.loadCustomModel('/models/broken.gguf');
+
+      expect(ok, isFalse);
+      expect(cubit.state.isModelLoaded, isFalse);
+
+      await cubit.close();
+    });
+  });
+
+  group('two-way translation ID -> EN -> ID', () {
+    test('prompt diterjemahkan → jawaban EN dikembalikan ke ID', () async {
+      // Model aktif LFM2 (bukan Tier 1) + NMT offline aktif untuk ID->EN.
+      final nmt = _RecordingNmt(
+        translations: {
+          'ganti solenoid pompa': 'replace the pump solenoid',
+        },
+        reverse: {'Replace the pump solenoid.': 'Ganti solenoid pompa.'},
+      );
+      TranslationService.instance
+        ..tier1DirectModelActive = false
+        ..webTierEnabled = false
+        ..localNmtProvider = nmt;
+      TranslationService.instance.clearCache();
+
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable(['Replace', ' the pump solenoid.']);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('ganti solenoid pompa');
+      // pumps: preparePrompt (async) + stream + back-translate.
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      final assistant = assistantMessage(cubit);
+      expect(assistant.text, 'Ganti solenoid pompa.');
+      expect(assistant.text, isNot(contains('Replace')));
+      expect(assistant.isStreaming, isFalse);
+
+      TranslationService.instance.localNmtProvider = MarianNmtProvider();
+      await cubit.close();
+    });
+
+    test('prompt TIDAK diterjemahkan (Tier 1) → jawaban tidak di-back-translate',
+        () async {
+      TranslationService.instance
+        ..tier1DirectModelActive = true
+        ..webTierEnabled = false
+        ..localNmtProvider = _RecordingNmt(translations: const {});
+      TranslationService.instance.clearCache();
+
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable(['Replace', ' the pump solenoid.']);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('ganti solenoid pompa');
+      await pumpEventQueue();
+      await pumpEventQueue();
+
+      final assistant = assistantMessage(cubit);
+      // Model Tier 1 menjawab langsung dalam bahasa user — teks apa adanya.
+      expect(assistant.text, 'Replace the pump solenoid.');
+
+      TranslationService.instance
+        ..tier1DirectModelActive = false
+        ..localNmtProvider = MarianNmtProvider();
+      await cubit.close();
+    });
+  });
+}
+
+/// NMT offline palsu: mencatat panggilan + menyediakan tabel hasil terjemahan
+/// (kunci exact) untuk menguji cascade dua arah.
+class _RecordingNmt implements LocalNmtProvider {
+  _RecordingNmt({required this.translations, this.reverse = const {}});
+
+  final Map<String, String> translations;
+  final Map<String, String> reverse;
+
+  @override
+  Future<bool> isAvailable(String sourceLang, String targetLang) async => true;
+
+  @override
+  Future<String> translate(
+    String text, {
+    required String sourceLang,
+    required String targetLang,
+  }) async {
+    final table = sourceLang == 'id' ? translations : reverse;
+    return table[text] ?? text;
+  }
 }

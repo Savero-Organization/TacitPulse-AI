@@ -234,9 +234,15 @@ class _ChatViewState extends State<_ChatView> {
     final messenger = ScaffoldMessenger.of(context);
     await ModelPathPickerSheet.show(
       context,
-      onSaved: (_) async {
+      onSaved: (path) async {
         final cubit = context.read<ChatCubit>();
-        await cubit.reloadModel();
+        // Path eksplisit dari picker → reload worker isolate dengan GGUF itu
+        // (bukan resolve default), supaya badge model langsung menyesuaikan.
+        if (path.isNotEmpty) {
+          await cubit.loadCustomModel(path);
+        } else {
+          await cubit.reloadModel();
+        }
         if (!mounted) return;
         if (!cubit.state.isModelLoaded) {
           final detail = cubit.startupError ??

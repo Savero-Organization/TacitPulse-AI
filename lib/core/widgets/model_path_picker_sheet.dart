@@ -487,8 +487,9 @@ class _ModelPathPickerSheetState extends State<ModelPathPickerSheet> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Harus berupa ${GgufValidator.targetModelLabel} '
-              '(arsitektur lfm2, ukuran 350M/230M).',
+              'Harus berupa GGUF dari keluarga LFM2 (LFM2/LFM2.5) atau Qwen — '
+              'mis. ${GgufValidator.targetModelLabel} atau '
+              '${GgufValidator.tier1ModelLabel}. Ukuran bebas (0.8B s/d 3B).',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),
             const SizedBox(height: 16),

@@ -96,14 +96,8 @@ class GgufValidator {
     'liquid',
   ];
 
-  /// Marker arsitektur/nama Qwen (2.x / 3.x, termasuk Qwen 3.5).
-  static const List<String> _qwenArchMarks = ['qwen2', 'qwen3', 'qwen'];
-
-  /// Penanda ukuran target (350M / 230M) pada nama/deskripsi model.
-  static const List<String> _targetSizeMarks = ['350m', '230m'];
-
-  /// Penanda ukuran Qwen 3.5 0.8B pada nama/deskripsi model.
-  static const List<String> _tier1SizeMarks = ['0.8b', '0.6b', '800m'];
+  /// Marker arsitektur/nama Qwen (2.x / 3.x / 3.5, dsb).
+  static const List<String> _qwenArchMarks = ['qwen'];
 
   static const int _ggufMagic = 0x46554747;
 
@@ -276,32 +270,20 @@ class GgufValidator {
     }
 
     final family = _detectFamily(architecture, modelName, fileName);
-    final combined = '${modelName ?? ''} $fileName'.toLowerCase();
-    final isTarget = switch (family) {
-      ModelFamily.lfm2 => _targetSizeMarks.any(combined.contains),
-      ModelFamily.qwen => _tier1SizeMarks.any(combined.contains),
-      ModelFamily.unknown => false,
-    };
+    // Tidak ada lagi pembatasan ukuran: APAPUN GGUF valid dari keluarga yang
+    // dikenali (Qwen / LFM2) boleh dipakai — Qwen 0.8B/1.5B/3B, LFM 350M,
+    // dst. Batasan nyata ada di sisi native (memori & ctx), bukan di header.
+    final isTarget = family != ModelFamily.unknown;
 
     String? message;
     if (!isTarget) {
-      if (family == ModelFamily.unknown) {
-        final detected = architecture == null
-            ? 'tidak diketahui'
-            : '$architecture${modelName == null ? '' : ' ($modelName)'}';
-        message =
-            'File GGUF valid, tetapi bukan model target. Arsitektur terdeteksi: '
-            '$detected. Diharapkan: $targetModelLabel atau $tier1ModelLabel.';
-      } else {
-        final detected = modelName ?? '*tidak terbaca / nama file*';
-        final expected = family == ModelFamily.qwen
-            ? 'ukuran 0.8B'
-            : 'ukuran 350M atau 230M';
-        message =
-            'Arsitektur ${family == ModelFamily.qwen ? 'Qwen' : 'LFM2.5'} cocok, '
-            'tetapi ukuran model tidak sesuai (terdeteksi "$detected"). '
-            'Diharapkan $expected dengan quantisasi keluarga Q4_K_M/Q4.';
-      }
+      final detected = architecture == null
+          ? 'tidak diketahui'
+          : '$architecture${modelName == null ? '' : ' ($modelName)'}';
+      message =
+          'File GGUF valid, tetapi arsitekturnya tidak didukung untuk chat '
+          'on-device. Arsitektur terdeteksi: $detected. Didukung: keluarga '
+          'LFM2 (LFM2/LFM2.5) atau Qwen.';
     }
 
     return GgufValidationResult(

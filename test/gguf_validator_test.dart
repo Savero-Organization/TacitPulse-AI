@@ -138,28 +138,43 @@ void main() {
       expect(r.isTier1DirectModel, isFalse);
     });
 
-    test('GGUF valid tapi Llama → bukan target', () async {
+    test('GGUF LFM2.5 ukuran besar (7B) → tetap target (tanpa batas ukuran)',
+        () async {
+      // Batas ukuran dihapus agar user bebas berganti model (0.8B → 3B, LFM
+      // 350M → 8B). Batasan nyata ada di native (memori/ctx), bukan validator.
       final f = writeFile(
-        'llama.gguf',
-        _buildGguf(architecture: 'llama', name: 'Llama-3-70B'),
-      );
-      final r = await GgufValidator.validateFile(f.path);
-
-      expect(r.isValidGguf, isTrue);
-      expect(r.isTargetModel, isFalse);
-      expect(r.architecture, 'llama');
-      expect(r.errorMessage, isNotNull);
-    });
-
-    test('GGUF LFM2.5 tapi ukuran besar (> 350M) → bukan target', () async {
-      final f = writeFile(
-        'LFM2.5-besar.gguf',
+        'LFM2.5-7B-Q4_K_M.gguf',
         _buildGguf(architecture: 'lfm2.5', name: 'LFM2.5-7B'),
       );
       final r = await GgufValidator.validateFile(f.path);
 
       expect(r.isValidGguf, isTrue);
+      expect(r.isTargetModel, isTrue);
+      expect(r.family, ModelFamily.lfm2);
+      expect(r.errorMessage, isNull);
+    });
+
+    test('Qwen ukuran bebas (3B) → target Tier 1', () async {
+      final f = writeFile(
+        'Qwen3-3B-Q4_K_M.gguf',
+        _buildGguf(architecture: 'qwen3', name: 'Qwen3-3B'),
+      );
+      final r = await GgufValidator.validateFile(f.path);
+
+      expect(r.isTargetModel, isTrue);
+      expect(r.isTier1DirectModel, isTrue);
+    });
+
+    test('arsitektur di luar Qwen/LFM2 (mis. llama) → ditolak', () async {
+      final f = writeFile(
+        'llama.gguf',
+        _buildGguf(architecture: 'llama', name: 'Llama-3-8B'),
+      );
+      final r = await GgufValidator.validateFile(f.path);
+
+      expect(r.isValidGguf, isTrue);
       expect(r.isTargetModel, isFalse);
+      expect(r.family, ModelFamily.unknown);
       expect(r.errorMessage, isNotNull);
     });
 

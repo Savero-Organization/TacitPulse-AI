@@ -9,6 +9,7 @@ import '../../../core/native/llm_inference.dart';
 import '../../../core/rag/intent_router.dart';
 import '../../../core/services/translation_service.dart';
 import '../../../core/utils/chatml.dart';
+import '../../../core/utils/gguf_validator.dart' show ModelFamily;
 import '../../../core/utils/model_loader.dart';
 import '../../../core/utils/thinking_utils.dart';
 import '../../mock_data.dart';
@@ -176,6 +177,34 @@ class ChatCubit extends Cubit<ChatState> {
     await init();
   }
 
+  /// Muat model dari [newPath] (hasil "Simpan & Muat Model" di picker).
+  ///
+  /// Meneruskan path ke [LLMInference.reloadModel] — worker isolate lama
+  /// (termasuk memori model C++) dihentikan, lalu worker baru di-spawn dengan
+  /// GGUF tersebut. Setelah itu tier translation disinkronkan ulang dan state
+  /// di-emit supaya badge model di header langsung ikut berubah.
+  ///
+  /// Mengembalikan `true` bila model baru siap dipakai.
+  Future<bool> loadCustomModel(String newPath) async {
+    stopGenerating();
+    final ok = await _llm.reloadModel(newPath);
+    if (isClosed) return ok;
+    _syncTranslationTiers();
+    emit(
+      state.copyWith(
+        isModelLoaded: ok,
+        hallucinationGuard: ok,
+        status: ChatStatus.idle,
+      ),
+    );
+    debugPrint(
+      '[ChatCubit] loadCustomModel: $newPath -> '
+      '${ok ? 'siap' : 'GAGAL'} (${ModelManager.currentModelName}, '
+      'family=${ModelManager.currentModelFamily.name})',
+    );
+    return ok;
+  }
+
   Future<void>? _reloading;
 
   /// Menghentikan generasi yang sedang berjalan (streaming).
@@ -275,9 +304,14 @@ class ChatCubit extends Cubit<ChatState> {
     List<ChatMessage> history, {
     required RoutingDecision decision,
   }) async {
-    final prompt = await _preparePrompt(question);
+    final prepared = await _preparePrompt(question);
     if (isClosed) return;
-    _streamNative(prompt, history, decision: decision);
+    _streamNative(
+      prepared.text,
+      history,
+      decision: decision,
+      promptWasTranslated: prepared.wasTranslated,
+    );
   }
 
   /// Cascade 3-tier untuk menyiapkan prompt yang dikirim ke LLM.
@@ -286,7 +320,10 @@ class ChatCubit extends Cubit<ChatState> {
   /// Tier 2 (LFM2.5) → `TranslationService` mencoba NMT offline lalu web
   /// publik (opt-in); bila semuanya gagal, teks asli diteruskan apa adanya
   /// sehingga LFM2.5 tetap menjawab (tidak ada bubble kosong).
-  Future<String> _preparePrompt(String question) async {
+  ///
+  /// Mengembalikan [_PreparedPrompt] berisi teks final untuk LLM + flag
+  /// apakah prompt diterjemahkan (dipakai untuk translasi balik EN→ID).
+  Future<_PreparedPrompt> _preparePrompt(String question) async {
     _syncTranslationTiers();
     final outcome = await TranslationService.instance.translate(
       question,
@@ -298,7 +335,10 @@ class ChatCubit extends Cubit<ChatState> {
       'translated=${outcome.wasTranslated}'
       '${outcome.error == null ? '' : ' reason="${outcome.error}"'}',
     );
-    return outcome.text;
+    return _PreparedPrompt(
+      text: outcome.text,
+      wasTranslated: outcome.wasTranslated,
+    );
   }
 
   /// Stream asli: token per-piece dari llama.cpp melalui worker isolate.
@@ -309,6 +349,7 @@ class ChatCubit extends Cubit<ChatState> {
     String question,
     List<ChatMessage> history, {
     required RoutingDecision decision,
+    bool promptWasTranslated = false,
   }) {
     _thinkOpen = false;
     _thinkOpenToken = null;
@@ -354,7 +395,10 @@ class ChatCubit extends Cubit<ChatState> {
             emit(state.copyWith(messages: msgs));
           },
           onError: (Object error) => _finishStreaming(assistantId, error: error),
-          onDone: () => _finishStreaming(assistantId),
+          onDone: () => _finishStreaming(
+            assistantId,
+            translateBackToIndonesian: promptWasTranslated,
+          ),
         );
   }
 
@@ -425,12 +469,17 @@ class ChatCubit extends Cubit<ChatState> {
     _thinkWatch = null;
   }
 
-  void _finishStreaming(String assistantId, {Object? error}) {
+  void _finishStreaming(
+    String assistantId, {
+    Object? error,
+    bool translateBackToIndonesian = false,
+  }) {
     if (isClosed) return;
     if (error != null) {
       debugPrint('[ChatCubit] stream error: $error');
     }
     if (_thinkOpen) _closeThinking();
+    var backTranslateCandidate = false;
     final msgs = state.messages.map((m) {
       if (m.id != assistantId) return m;
       // Detail error native tidak ditampilkan ke pengguna (bisa berisi path
@@ -463,6 +512,11 @@ class ChatCubit extends Cubit<ChatState> {
           text =
               '⚠️ Model tidak menghasilkan jawaban. Pastikan file model GGUF '
               'valid dan telah dimuat dengan benar.';
+        } else if (translateBackToIndonesian) {
+          // Prompt sudah diterjemahkan ID→EN, jadi jawaban model (EN)
+          // dikembalikan ke ID agar teknisi tetap membaca dalam bahasa
+          // sendiri. Emit ditunda sampai translasi balik selesai.
+          backTranslateCandidate = true;
         }
       } else {
         text = '$text\n\n⚠️ Gagal memproses. Periksa log untuk detail.';
@@ -474,7 +528,62 @@ class ChatCubit extends Cubit<ChatState> {
       );
     }).toList();
     _thinkOpenToken = null;
+
+    if (backTranslateCandidate) {
+      // Tahan emit:_STATE belum final sampai translasi balik selesai, supaya
+      // teknisi tidak pernah melihat jawaban Inggris.
+      unawaited(_emitBackTranslated(assistantId, msgs));
+      return;
+    }
     emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
+  }
+
+  /// Translasi balik jawaban EN→ID lalu emit state final.
+  ///
+  /// Hanya berjalan bila model aktif keluarga LFM2 (bila model Tier 1/Qwen
+  /// aktif, middleware memang tidak dipakai sehingga prompt & jawaban sudah
+  /// konsisten). Bila translasi balik gagal / kosong, teks Inggris asli
+  /// dipertahankan — lebih baik daripada bubble kosong.
+  Future<void> _emitBackTranslated(
+    String assistantId,
+    List<ChatMessage> msgs,
+  ) async {
+    if (isClosed) return;
+    try {
+      if (ModelManager.currentModelFamily == ModelFamily.qwen) {
+        emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
+        return;
+      }
+      final english = msgs
+          .firstWhere((m) => m.id == assistantId, orElse: () => msgs.last)
+          .text;
+      if (english.trim().isEmpty) {
+        emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
+        return;
+      }
+
+      _syncTranslationTiers();
+      final outcome = await TranslationService.instance.translate(
+        english,
+        sourceLang: 'en',
+        targetLang: 'id',
+      );
+      if (isClosed) return;
+      debugPrint(
+        '[Translation-back] tier=${outcome.tier.label} '
+        'translated=${outcome.wasTranslated}',
+      );
+
+      final localized = outcome.wasTranslated ? outcome.text : english;
+      final updated = msgs
+          .map((m) => m.id == assistantId ? m.copyWith(text: localized) : m)
+          .toList();
+      emit(state.copyWith(messages: updated, status: ChatStatus.idle));
+    } catch (e) {
+      if (isClosed) return;
+      debugPrint('[Translation-back] gagal: $e — teks Inggris dipertahankan');
+      emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
+    }
   }
 
   /// Fallback simulasi (dipakai kalau model belum ada / native tidak siap).
@@ -541,4 +650,16 @@ class ChatCubit extends Cubit<ChatState> {
     _llm.dispose();
     return super.close();
   }
+}
+
+/// Hasil [_preparePrompt]: teks prompt untuk LLM + apakah prompt itu
+/// diterjemahkan (ID→EN) oleh cascade.
+///
+/// Flag ini menentukan apakah jawaban model perlu diterjemahkan balik
+/// EN→ID sebelum ditampilkan ke teknisi.
+class _PreparedPrompt {
+  const _PreparedPrompt({required this.text, required this.wasTranslated});
+
+  final String text;
+  final bool wasTranslated;
 }

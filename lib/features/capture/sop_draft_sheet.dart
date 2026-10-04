@@ -14,11 +14,19 @@ class SopDraftSheet extends StatelessWidget {
   final TacitNote note;
 
   static Future<void> show(BuildContext context, TacitNote note) {
+    // Route modal dibangun di context Navigator (di atas BlocProvider milik
+    // CaptureScreen), jadi cubit harus di-capture dari context pemanggil dan
+    // di-inject ulang — kalau tidak, BlocBuilder di sheet melempar
+    // ProviderNotFoundException ("Could not find the correct Provider<CaptureCubit>").
+    final cubit = context.read<CaptureCubit>();
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.deepCharcoal,
-      builder: (_) => SopDraftSheet(note: note),
+      builder: (_) => BlocProvider<CaptureCubit>.value(
+        value: cubit,
+        child: SopDraftSheet(note: note),
+      ),
     );
   }
 
@@ -50,23 +58,39 @@ class SopDraftSheet extends StatelessWidget {
                 const SizedBox(height: 18),
                 Row(
                   children: [
-                    const Icon(Icons.description_outlined, color: AppColors.industrialAmber),
+                    const Icon(
+                      Icons.description_outlined,
+                      color: AppColors.industrialAmber,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Draft SOP dari Voice Note',
-                        style: const TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                     InkWell(
                       onTap: () => Navigator.of(context).pop(),
-                      child: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text(current.title,
-                    style: const TextStyle(color: AppColors.cyanAccent, fontSize: 13, fontWeight: FontWeight.w600)),
+                Text(
+                  current.title,
+                  style: const TextStyle(
+                    color: AppColors.cyanAccent,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 14),
                 _meta('TEKNISI', current.technician),
                 _meta('LINE', current.line),
@@ -82,7 +106,11 @@ class SopDraftSheet extends StatelessWidget {
                   ),
                   child: Text(
                     current.transcribedText,
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.5),
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                      height: 1.5,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 18),
@@ -91,9 +119,13 @@ class SopDraftSheet extends StatelessWidget {
                 const SizedBox(height: 20),
                 BlocBuilder<CaptureCubit, CaptureState>(
                   builder: (context, state) {
-                    final ready = current.sopSteps.isNotEmpty && !current.sopSteps.any((s) => !s.confirmed);
+                    final ready =
+                        current.sopSteps.isNotEmpty &&
+                        !current.sopSteps.any((s) => !s.confirmed);
                     return FilledButton.icon(
-                      onPressed: ready ? () => context.read<CaptureCubit>().exportDraft() : null,
+                      onPressed: ready
+                          ? () => context.read<CaptureCubit>().exportDraft()
+                          : null,
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.industrialAmber,
                         foregroundColor: AppColors.slateDark,
@@ -101,7 +133,10 @@ class SopDraftSheet extends StatelessWidget {
                         disabledBackgroundColor: AppColors.slateMuted,
                       ),
                       icon: const Icon(Icons.assignment_turned_in_outlined),
-                      label: const Text('Simpan sebagai SOP', style: TextStyle(fontWeight: FontWeight.w700)),
+                      label: const Text(
+                        'Simpan sebagai SOP',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     );
                   },
                 ),
@@ -112,8 +147,13 @@ class SopDraftSheet extends StatelessWidget {
                       children: [
                         PulseDot(color: AppColors.success),
                         SizedBox(width: 8),
-                        Text('Draft tersimpan ke Knowledge Store (sqlite).',
-                            style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                        Text(
+                          'Draft tersimpan ke Knowledge Store (sqlite).',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -132,9 +172,23 @@ class SopDraftSheet extends StatelessWidget {
         children: [
           SizedBox(
             width: 72,
-            child: Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-          Text(value, style: const TextStyle(color: AppColors.textPrimary, fontSize: 12, fontFamily: 'monospace')),
+          Text(
+            value,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 12,
+              fontFamily: 'monospace',
+            ),
+          ),
         ],
       ),
     );
@@ -150,16 +204,28 @@ class _StepTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<CaptureCubit, CaptureState>(
       builder: (context, state) {
-        final matching = state.activeDraft?.sopSteps.where((s) => s.order == step.order) ?? const <SopDraftStep>[];
-        final confirmed = matching.isNotEmpty ? matching.first.confirmed : step.confirmed;
-        final imgIdx = state.activeDraft?.sopSteps.indexWhere((s) => s.order == step.order) ?? -1;
+        final matching =
+            state.activeDraft?.sopSteps.where((s) => s.order == step.order) ??
+            const <SopDraftStep>[];
+        final confirmed = matching.isNotEmpty
+            ? matching.first.confirmed
+            : step.confirmed;
+        final imgIdx =
+            state.activeDraft?.sopSteps.indexWhere(
+              (s) => s.order == step.order,
+            ) ??
+            -1;
         return Container(
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: AppColors.slateMuted.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: confirmed ? AppColors.success.withValues(alpha: 0.5) : AppColors.surfaceBorder),
+            border: Border.all(
+              color: confirmed
+                  ? AppColors.success.withValues(alpha: 0.5)
+                  : AppColors.surfaceBorder,
+            ),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -169,34 +235,59 @@ class _StepTile extends StatelessWidget {
                 height: 24,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: confirmed ? AppColors.success.withValues(alpha: 0.18) : AppColors.slateDark,
+                  color: confirmed
+                      ? AppColors.success.withValues(alpha: 0.18)
+                      : AppColors.slateDark,
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: confirmed ? AppColors.success : AppColors.slateMuted),
+                  border: Border.all(
+                    color: confirmed ? AppColors.success : AppColors.slateMuted,
+                  ),
                 ),
-                child: Text('${step.order}',
-                    style: TextStyle(
-                      color: confirmed ? AppColors.success : AppColors.textSecondary,
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    )),
+                child: Text(
+                  '${step.order}',
+                  style: TextStyle(
+                    color: confirmed
+                        ? AppColors.success
+                        : AppColors.textSecondary,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(step.title,
-                        style: const TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600)),
+                    Text(
+                      step.title,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 3),
-                    Text(step.detail,
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.4)),
+                    Text(
+                      step.detail,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
                   ],
                 ),
               ),
               Checkbox(
                 value: confirmed,
-                onChanged: imgIdx >= 0 ? (v) => context.read<CaptureCubit>().confirmStep(imgIdx, v ?? false) : null,
+                onChanged: imgIdx >= 0
+                    ? (v) => context.read<CaptureCubit>().confirmStep(
+                        imgIdx,
+                        v ?? false,
+                      )
+                    : null,
                 activeColor: AppColors.success,
               ),
             ],

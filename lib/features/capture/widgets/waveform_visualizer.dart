@@ -26,7 +26,11 @@ class WaveformVisualizer extends StatelessWidget {
 }
 
 class _WavePainter extends CustomPainter {
-  _WavePainter({required this.samples, required this.color, required this.active});
+  _WavePainter({
+    required this.samples,
+    required this.color,
+    required this.active,
+  });
 
   final List<double> samples;
   final Color color;
@@ -46,9 +50,12 @@ class _WavePainter extends CustomPainter {
 
     for (var i = 0; i < samples.length; i++) {
       final x = i * (barWidth + gap) + gap / 2;
-      final amp = size.height * 0.42 * samples[i].clamp(0.03, 1);
+      final amp = size.height * 0.42 * samples[i].clamp(0.03, 1.0);
       final paint = active ? (Paint()..color = color) : inactivePaint;
-      paint.strokeWidth = barWidth.clamp(1.5, 6) as double;
+      // clamp() mengembalikan num; batas harus double agar hasilnya double.
+      // clamp(1.5, 6) dengan int 6 melempar `type 'int' is not a subtype of
+      // type 'double'` saat barWidth > 6 (panel lebar).
+      paint.strokeWidth = barWidth.clamp(1.5, 6.0).toDouble();
       paint.strokeCap = StrokeCap.round;
       canvas.drawLine(Offset(x, midY - amp), Offset(x, midY + amp), paint);
     }

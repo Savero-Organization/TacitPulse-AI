@@ -80,10 +80,10 @@ class _RecorderPanel extends StatelessWidget {
                 color: isRecording
                     ? AppColors.danger
                     : isTranscribing
-                        ? AppColors.warning
-                        : isDrafting
-                            ? AppColors.success
-                            : AppColors.textMuted,
+                    ? AppColors.warning
+                    : isDrafting
+                    ? AppColors.success
+                    : AppColors.textMuted,
               ),
               const SizedBox(width: 6),
               Text(
@@ -92,10 +92,10 @@ class _RecorderPanel extends StatelessWidget {
                   color: isRecording
                       ? AppColors.danger
                       : isTranscribing
-                          ? AppColors.warning
-                          : isDrafting
-                              ? AppColors.success
-                              : AppColors.textSecondary,
+                      ? AppColors.warning
+                      : isDrafting
+                      ? AppColors.success
+                      : AppColors.textSecondary,
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.8,
@@ -105,7 +105,11 @@ class _RecorderPanel extends StatelessWidget {
                 const Spacer(),
                 Text(
                   _time(state.recordingSeconds),
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 13, fontFamily: 'monospace'),
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                  ),
                 ),
               ],
             ],
@@ -155,29 +159,39 @@ class _RecorderPanel extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         icon: const Icon(Icons.stop_rounded),
-                        label: const Text('Stop Rekam', style: TextStyle(fontWeight: FontWeight.w700)),
+                        label: const Text(
+                          'Stop Rekam',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       )
                     : isDrafting && state.activeDraft != null
-                        ? FilledButton.icon(
-                            onPressed: () => SopDraftSheet.show(context, state.activeDraft!),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: AppColors.industrialAmber,
-                              foregroundColor: AppColors.slateDark,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            icon: const Icon(Icons.description_outlined),
-                            label: const Text('Lihat Draft SOP', style: TextStyle(fontWeight: FontWeight.w700)),
-                          )
-                        : FilledButton.icon(
-                            onPressed: cubit.startRecording,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: AppColors.cyanAccent,
-                              foregroundColor: AppColors.slateDark,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            icon: const Icon(Icons.mic_rounded),
-                            label: const Text('Rekam Voice Note', style: TextStyle(fontWeight: FontWeight.w700)),
-                          ),
+                    ? FilledButton.icon(
+                        onPressed: () =>
+                            SopDraftSheet.show(context, state.activeDraft!),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.industrialAmber,
+                          foregroundColor: AppColors.slateDark,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(Icons.description_outlined),
+                        label: const Text(
+                          'Lihat Draft SOP',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      )
+                    : FilledButton.icon(
+                        onPressed: cubit.startRecording,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.cyanAccent,
+                          foregroundColor: AppColors.slateDark,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        icon: const Icon(Icons.mic_rounded),
+                        label: const Text(
+                          'Rekam Voice Note',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
               ),
             ],
           ),
@@ -188,9 +202,14 @@ class _RecorderPanel extends StatelessWidget {
                 children: [
                   PulseDot(color: AppColors.success),
                   SizedBox(width: 6),
-                  Text(
-                    'whisper.cpp selesai transkripsi · Draft SOP siap dikonfirmasi.',
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  Expanded(
+                    child: Text(
+                      'whisper.cpp selesai transkripsi · Draft SOP siap dikonfirmasi.',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -201,13 +220,14 @@ class _RecorderPanel extends StatelessWidget {
   }
 
   String get _statusText => switch (state.status) {
-        CaptureStatus.recording => 'RECORDING',
-        CaptureStatus.transcribing => 'TRANSCRIBING',
-        CaptureStatus.drafting => 'DRAFT SIAP',
-        CaptureStatus.idle => 'IDLE',
-      };
+    CaptureStatus.recording => 'RECORDING',
+    CaptureStatus.transcribing => 'TRANSCRIBING',
+    CaptureStatus.drafting => 'DRAFT SIAP',
+    CaptureStatus.idle => 'IDLE',
+  };
 
-  String _time(int seconds) => '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
+  String _time(int seconds) =>
+      '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
 }
 
 class _NotesList extends StatelessWidget {
@@ -256,10 +276,10 @@ class _NoteTile extends StatelessWidget {
   final VoidCallback? onTap;
 
   Color get _statusColor => switch (note.status) {
-        SopDraftStatus.exported => AppColors.success,
-        SopDraftStatus.ready => AppColors.cyanAccent,
-        SopDraftStatus.drafting => AppColors.industrialAmber,
-      };
+    SopDraftStatus.exported => AppColors.success,
+    SopDraftStatus.ready => AppColors.cyanAccent,
+    SopDraftStatus.drafting => AppColors.industrialAmber,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -280,7 +300,11 @@ class _NoteTile extends StatelessWidget {
             SizedBox(
               width: 48,
               height: 48,
-              child: WaveformVisualizer(samples: note.waveform, color: AppColors.cyanAccent, active: false),
+              child: WaveformVisualizer(
+                samples: note.waveform,
+                color: AppColors.cyanAccent,
+                active: false,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -291,23 +315,39 @@ class _NoteTile extends StatelessWidget {
                     note.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     '${note.technician} · ${note.line}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 11,
+                    ),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     '${note.durationSeconds}s · ${note.sopSteps.length} langkah',
-                    style: TextStyle(color: _statusColor, fontSize: 11, fontWeight: FontWeight.w600, fontFamily: 'monospace'),
+                    style: TextStyle(
+                      color: _statusColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ],
               ),
             ),
             BadgeChip(
-              label: note.status == SopDraftStatus.exported ? 'EXPORTED' : note.status == SopDraftStatus.ready ? 'READY' : 'DRAFT',
+              label: note.status == SopDraftStatus.exported
+                  ? 'EXPORTED'
+                  : note.status == SopDraftStatus.ready
+                  ? 'READY'
+                  : 'DRAFT',
               color: _statusColor,
               light: _statusColor,
             ),

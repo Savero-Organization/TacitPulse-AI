@@ -1,0 +1,4 @@
+# Simpan-dari-tree-shake ML Kit optional language recognizers
+-keep class com.google.mlkit.** { *; }
+-dontwarn com.google.mlkit.**
+-keep class com.google_mlkit_text_recognition.** { *; }

@@ -351,6 +351,22 @@ void main() {
       await cubit.close();
     });
 
+    test('empty model output tetap fallback', () async {
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable(['<|im_start|>assistant\n<|im_end|>']);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('test');
+      await pumpEventQueue();
+
+      final assistant = assistantMessage(cubit);
+      expect(assistant.text.trim(), isNotEmpty);
+      expect(assistant.text,
+          contains('⚠️ Model tidak menghasilkan jawaban.'));
+
+      await cubit.close();
+    });
+
     test('streaming <think> menyimpan reasoning & answer terpisah', () async {
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable([
@@ -416,7 +432,10 @@ void main() {
       await pumpEventQueue();
 
       final assistant = assistantMessage(cubit);
-      expect(assistant.text, isEmpty);
+      // Stream yang hanya berisi token kontrol selesai sebagai fallback
+      // empty-response, bukan mengeluarkan jejak token mentah.
+      expect(assistant.text,
+          contains('⚠️ Model tidak menghasilkan jawaban.'));
       expect(cubit.state.status, ChatStatus.idle);
 
       await cubit.close();

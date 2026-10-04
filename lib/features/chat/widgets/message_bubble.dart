@@ -207,9 +207,17 @@ class MessageBubble extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: children.isEmpty
           ? [
-              const Text(
-                '· · ·',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 14),
+              Text(
+                message.isStreaming
+                    ? '· · ·'
+                    : '⚠️ Model tidak menghasilkan jawaban. Pastikan file '
+                        'model GGUF valid dan telah dimuat dengan benar.',
+                style: TextStyle(
+                  color: message.isStreaming
+                      ? AppColors.textMuted
+                      : AppColors.textPrimary,
+                  fontSize: 14,
+                ),
               ),
             ]
           : children,

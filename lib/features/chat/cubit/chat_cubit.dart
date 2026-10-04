@@ -276,8 +276,7 @@ class ChatCubit extends Cubit<ChatState> {
             // dan sebelum digabung ke teks. Tanpa trim — menghilangkan spasi
             // per-piece merusak penggabungan kalimat.
             final clean = stripSpecialTokens(piece);
-            if (clean.isEmpty) return;
-            final injected = _trackThinking(clean);
+            final injected = clean.isEmpty ? null : _trackThinking(clean);
             // Simpan buffer mentah TANPA stripping — memangkas token parsial
             // secara menyilang piece akan merusak rangkaian token.
             _fullText += piece;
@@ -390,6 +389,14 @@ class ChatCubit extends Cubit<ChatState> {
         text = stripChatMlTokens(stripSpecialTokens(text));
         text = removeEmptyThinkingBlocks(text);
         text = text.trimRight();
+        if (text.trim().isEmpty ||
+            text.trim().toLowerCase() == 'assistant' ||
+            text.trim().toLowerCase() == 'system' ||
+            text.trim().toLowerCase() == 'user') {
+          text =
+              '⚠️ Model tidak menghasilkan jawaban. Pastikan file model GGUF '
+              'valid dan telah dimuat dengan benar.';
+        }
       } else {
         text = '$text\n\n⚠️ Gagal memproses. Periksa log untuk detail.';
       }

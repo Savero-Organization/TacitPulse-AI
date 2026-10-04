@@ -99,17 +99,17 @@ void main() {
       expect(r.errorMessage, isNotNull);
     });
 
-    test('GGUF Qwen 0.8B via metadata → target model', () async {
+    test('GGUF LFM2.5 350M via metadata → target model', () async {
       final f = writeFile(
-        'qwen.gguf',
-        _buildGguf(architecture: 'qwen2', name: 'Qwen2-0.8B-Instruct'),
+        'LFM2.5-350M-Q4_K_M.gguf',
+        _buildGguf(architecture: 'lfm2.5', name: 'LFM2.5-350M-Instruct'),
       );
       final r = await GgufValidator.validateFile(f.path);
 
       expect(r.isValidGguf, isTrue);
       expect(r.isTargetModel, isTrue);
-      expect(r.architecture, 'qwen2');
-      expect(r.modelName, 'Qwen2-0.8B-Instruct');
+      expect(r.architecture, 'lfm2.5');
+      expect(r.modelName, 'LFM2.5-350M-Instruct');
       expect(r.validForUse, isTrue);
     });
 
@@ -126,10 +126,10 @@ void main() {
       expect(r.errorMessage, isNotNull);
     });
 
-    test('GGUF Qwen tapi ukuran besar (> 0.8B) → bukan target', () async {
+    test('GGUF LFM2.5 tapi ukuran besar (> 350M) → bukan target', () async {
       final f = writeFile(
-        'qwen-besar.gguf',
-        _buildGguf(architecture: 'qwen2', name: 'Qwen2-7B'),
+        'LFM2.5-besar.gguf',
+        _buildGguf(architecture: 'lfm2.5', name: 'LFM2.5-7B'),
       );
       final r = await GgufValidator.validateFile(f.path);
 
@@ -139,10 +139,10 @@ void main() {
     });
 
     test('fallback nama file bila metadata tokenizer besar / tidak terbaca '
-        '(nama file qwen + 0.8b tetap diterima)', () async {
+        '(nama file LFM2.5 + 0.8b tetap diterima)', () async {
       // Header valid tapi metadata hanya sampai magic (tidak ada general.*):
       // keputusan target diambil dari nama file.
-      final f = writeFile('qwen3.5-0.8b-q4_k_m.gguf', _buildGguf());
+      final f = writeFile('LFM2.5-350M-Q4_K_M.gguf', _buildGguf());
       final r = await GgufValidator.validateFile(f.path);
 
       expect(r.isValidGguf, isTrue);
@@ -154,8 +154,8 @@ void main() {
       final f = writeFile(
         'skip-array.gguf',
         _buildGguf(
-          architecture: 'qwen2',
-          name: 'Qwen3-0.5B-Instruct',
+          architecture: 'lfm2.5',
+          name: 'LFM2.5-230M-Instruct',
           includeArrayBefore: true,
         ),
       );
@@ -163,8 +163,8 @@ void main() {
 
       expect(r.isValidGguf, isTrue);
       expect(r.isTargetModel, isTrue);
-      expect(r.architecture, 'qwen2');
-      expect(r.modelName, 'Qwen3-0.5B-Instruct');
+      expect(r.architecture, 'lfm2.5');
+      expect(r.modelName, 'LFM2.5-230M-Instruct');
     });
 
     test('file terpotong setelah magic → isValidGguf false tanpa throw',
@@ -182,8 +182,8 @@ void main() {
     test('jalur relatif-POSIX (tanpa /) dinormalisasi → file yang sama ter-'
         'validasi (home/savero/... ≡ /home/savero/...)', () async {
       final f = writeFile(
-        'qwen.gguf',
-        _buildGguf(architecture: 'qwen2', name: 'Qwen2-0.8B-Instruct'),
+        'LFM2.5-350M-Q4_K_M.gguf',
+        _buildGguf(architecture: 'lfm2.5', name: 'LFM2.5-350M-Instruct'),
       );
       // bentuk relatif = absolut tanpa '/' depan → normalizePath menambahkan
       // '/' kembali sehingga menunjuk ke file yang sama.

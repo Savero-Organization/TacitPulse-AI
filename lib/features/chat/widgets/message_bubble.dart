@@ -133,12 +133,13 @@ class MessageBubble extends StatelessWidget {
     // Assistant: pisahkan blok berpikir (bisa di-collapse) dari jawaban final.
     final thinking = thinkingPreview(text);
     final answer = answerContent(text);
+    final hasThinkingBlock = findThinkingSpan(text) != null;
     final activeThinking = message.isStreaming && isInsideThinkingBlock(text);
 
-    // Belum ada konten sama sekali (token berpikir/jawaban belum keluar) tapi
-    // stream aktif → tampilkan panel "Proses Berpikir" sebagai indikator
-    // analisis live.
-    final pending = message.isStreaming && answer.isEmpty && thinking == null;
+    // Hanya tampilkan panel thinking kalau teks benar-benar membawa blok
+    // thinking. Model tanpa thinking tags harus langsung ke MarkdownBody.
+    final pending =
+        hasThinkingBlock && message.isStreaming && answer.isEmpty && thinking == null;
 
     final children = <Widget>[];
     if (thinking != null) {

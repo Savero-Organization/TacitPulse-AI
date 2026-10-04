@@ -27,8 +27,8 @@ class _FakePathProvider extends Fake with MockPlatformInterfaceMixin
 /// Membangun byte header GGUF minimal yang valid
 /// (magic "GGUF" + metadata `general.architecture` & `general.name`).
 Uint8List buildGgufBytes({
-  String architecture = 'qwen2',
-  String name = 'Qwen2-0.8B-Instruct',
+  String architecture = 'lfm2.5',
+  String name = 'LFM2.5-350M-Instruct',
   int version = 3,
 }) {
   final b = BytesBuilder(copy: false);
@@ -489,11 +489,11 @@ void main() {
         () async {
       final cache = Directory('$docsPath/${ModelManager.meshCacheDirName}')
         ..createSync(recursive: true);
-      File('${cache.path}/qwen3.5-0.8b.q4_k_m.gguf')
+      File('${cache.path}/LFM2.5-350M-Q4_K_M.gguf')
           .writeAsBytesSync(buildGgufBytes());
 
       expect(await ModelManager.resolveModelPath(),
-          '${cache.path}/qwen3.5-0.8b.q4_k_m.gguf');
+          '${cache.path}/LFM2.5-350M-Q4_K_M.gguf');
     });
 
     test('null (bukan throw) bila tidak tersedia di semua tier', () async {

@@ -58,11 +58,12 @@ DynamicLibrary openTacitLlamaLibrary() {
 
 /// Prompt sistem default berbahasa Indonesia untuk asisten teknisi.
 const String _kDefaultSystemPrompt =
-    'Kamu adalah asisten teknisi maintenance pabrik. Jawab singkat, padat, '
-    'dan langsung praktis. Jika menjawab dari SOP atau log mesin, sebutkan '
-    'sumbernya. Jangan menebak fakta yang tidak ada di sumber.';
+    'Kamu adalah asisten teknik pabrik on-device LFM2.5. Jawab singkat, padat, '
+    'dan langsung praktis. Jika mengacu pada SOP atau log, cantumkan sumber '
+    'persis (dokumen/halaman/label) dan hindarkan menebak fakta yang tidak '
+    'tersedia di referensi.';
 
-/// Stop-sequence bawaan (token kontrol Qwen/llama.cpp) yang menghentikan
+/// Stop-sequence bawaan (token kontrol LFM2.5/llama.cpp) yang menghentikan
 /// generasi dan disanitasi dari output TACIT TADIR.
 ///
 /// Dipakai dua lapis: worker native mendeteksi token ini pada aliran piece
@@ -137,9 +138,9 @@ class LLMInference {
   /// Singleton yang dipakai app.
   static final LLMInference instance = LLMInference._();
 
-  /// Nama default model GGUF (Qwen 3.5-0.8B Q4_K_M) di folder models
+  /// Nama default model GGUF (LFM2.5-350M-Q4_K_M) di folder models
   /// dalam dokumen aplikasi.
-  static const String defaultModelFile = 'qwen3.5-0.8b-q4_k_m.gguf';
+  static const String defaultModelFile = 'LFM2.5-350M-Q4_K_M.gguf';
 
   Isolate? _worker;
   SendPort? _requests;
@@ -229,7 +230,7 @@ class LLMInference {
 
   /// Generasi streaming. Yield satu `string` per token piece.
   ///
-  /// Prompt otomatis dibungkus template chat Qwen. Kalau [isReady] false
+  /// Prompt otomatis dibungkus template chat LFM2.5. Kalau [isReady] false
   /// (model belum siap) stream langsung selesai — caller boleh memakai mock
   /// sebagai fallback.
   ///
@@ -350,7 +351,7 @@ class LLMInference {
   _ready = false;
 }
 
-  /// Prompt chat Qwen 3.x: format im_start / im_end.
+  /// Prompt chat LFM2.5: format im_start / im_end.
   /// [contextDocs] (hasil routing RAG) disisipkan sebagai blok referensi
   /// di prompt sistem — kosong bila tidak ada context.
   String _buildChatPrompt(String system, String user, {String? contextDocs}) {

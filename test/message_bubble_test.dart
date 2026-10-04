@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tacit_pulse_ai/core/models/chat_message.dart';
 import 'package:tacit_pulse_ai/core/utils/thinking_utils.dart';
@@ -105,7 +106,7 @@ void main() {
   testWidgets('streaming tanpa konten → panel analisis aktif tampil live',
       (tester) async {
     await tester.pumpWidget(
-      _app(_assistantMessage(text: '', streaming: true, thinkingSeconds: 3)),
+      _app(_assistantMessage(text: '<think>', streaming: true, thinkingSeconds: 3)),
     );
     await tester.pump();
 
@@ -121,7 +122,7 @@ void main() {
   testWidgets('indikator "Menganalisis" berganti live konten saat token '
       'berpikir tiba', (tester) async {
     await tester.pumpWidget(
-      _app(_assistantMessage(text: '', streaming: true)),
+      _app(_assistantMessage(text: '<think>', streaming: true)),
     );
     await tester.pump();
     expect(
@@ -175,5 +176,19 @@ void main() {
     await tester.tap(find.textContaining('💡 Proses Berpikir'));
     await tester.pumpAndSettle();
     expect(find.text('cek log sensor'), findsOneWidget);
+  });
+
+  testWidgets('streaming direct answer tanpa think tags tidak memperlihatkan akordion',
+      (tester) async {
+    await tester.pumpWidget(_app(_assistantMessage(
+      text: 'LFM2.5-350M-Q4_K_M streaming langsung.',
+      streaming: true,
+    )));
+    await tester.pump();
+
+    expect(find.textContaining('💡 Proses Berpikir'), findsNothing);
+    expect(find.textContaining('⚙️ Menganalisis'), findsNothing);
+    expect(find.byType(MarkdownBody), findsOneWidget);
+    expect(find.textContaining('LFM2.5-350M-Q4_K_M'), findsOneWidget);
   });
 }

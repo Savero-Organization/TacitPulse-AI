@@ -63,14 +63,31 @@ tacit_model * model_load_internal(const char * model_path) {
         return nullptr;
     }
 
-    // Offload all layers to GPU/iGPU VRAM (CUDA / ROCm / Vulkan) when the
-    // build has a compute device. With zero GPUs llama.cpp safely falls back
-    // to CPU — n_gpu_layers is just an upper bound, not a hard requirement.
+    // Offload ke GPU bila host punya backend offload (Vulkan/CUDA/ROCm/Metal
+    // yang berhasil probe melalui llama_backend). Kalau tidak, jatuh eksplisit
+    // ke CPU multithreading supaya runtime tidak pernah menabrak pipa Vulkan
+    // yang tidak ada — n_gpu_layers = 99 adalah batas atas, bukan asumsi
+    // perangkat.
+    const bool gpu_offload = llama_supports_gpu_offload();
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 99;
+    mparams.n_gpu_layers = gpu_offload ? 99 : 0;
+    if (!gpu_offload) {
+        LOGW("No GPU offload backend detected — CPU fallback mode.");
+    }
 
     h->model = llama_model_load_from_file(model_path, mparams);
-    if (h->model == nullptr) {
+    if (h->model == nullptr && gpu_offload) {
+        // Fallback keras: probe mengatakan ada GPU tetapi load gagal
+        // (driver hilang/bug) — coba lagi murni CPU sebelum menyerah.
+        LOGW("GPU load failed, retrying CPU-only with n_gpu_layers=0");
+        mparams.n_gpu_layers = 0;
+        h->model = llama_model_load_from_file(model_path, mparams);
+        if (h->model == nullptr) {
+            set_error("failed to load GGUF model (GPU and CPU fallback)");
+            delete h;
+            return nullptr;
+        }
+    } else if (h->model == nullptr) {
         set_error("failed to load GGUF model");
         delete h;
         return nullptr;

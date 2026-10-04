@@ -90,17 +90,17 @@ class ModelManager {
   @visibleForTesting
   static Future<Directory> Function()? downloadCacheOverride;
 
-  static const defaultModelName = 'qwen3.5-0.8b-q4_k_m.gguf';
+  static const defaultModelName = 'LFM2.5-350M-Q4_K_M.gguf';
 
   /// URL mirror HuggingFace (CDN) untuk In-App Downloader. Menyediakan
-  /// [defaultModelName] (Qwen 3.5 0.8B Q4_K_M). Bisa diganti mirror lain
+  /// [defaultModelName] (LFM2.5-350M Q4_K_M). Bisa diganti mirror lain
   /// tanpa mengubah kode — downloader relatif terhadap URL ini.
   static const String defaultModelDownloadUrl =
-      'https://huggingface.co/Mustafaege/Qwen3.5-0.8B-GGUF-q4_k_m/resolve/main/'
-      'Qwen3.5-0.8B.Q4_K_M.gguf';
+      'https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/'
+      'LFM2.5-350M-Q4_K_M.gguf';
 
   /// Default fallback size ketika offline / ukuran remote tidak ter-resolve.
-  static const double defaultModelSizeMb = 532.5;
+  static const double defaultModelSizeMb = 229.0;
 
   // ---------------------------------------------------------------------------
   // Embedding model (GABUT 30) — kontrak lintas-branch: nama & URL JANGAN
@@ -212,7 +212,7 @@ class ModelManager {
     );
   }
 
-  /// Cari model target (Qwen 3.5 0.8B) di P2P shared cache
+  /// Cari model target (LFM2.5-350M Q4_K_M) di P2P shared cache
   /// (`<root>/mesh_cache/`). Memvalidasi setiap kandidat `.gguf`;
   /// mengembalikan path pertama yang valid & sesuai target, atau `null`.
   static Future<String?> findModelInMeshCache() async {

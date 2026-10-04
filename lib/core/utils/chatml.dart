@@ -23,10 +23,11 @@ String stripChatMlTokens(String text) {
     current = next;
   } while (true);
   // Potong ekor token kontrol parsial/utuh (`<|im`, `<|im_end`, `<|im_end|>`,
-  // `<|im_start|...`) hingga akhir teks — token ChatML, yang bersifat
-  // stop-sequence tidak boleh terbawa ke jawaban.
+  // `<|im_start|...`, `<|endoftext`) hingga akhir teks — tanpa swallowing
+  // baris sebelumnnya karena greedy `.*` dibatasi baris (multiLine: false).
   return current.replaceAll(
-    RegExp(r'\s*<\|im(_end|_start)?>?.*$', dotAll: true),
+    RegExp(r'\s*<\|(im(_end|_start|_of_text)?|endoftext)>?.*$',
+        multiLine: false),
     '',
   );
 }

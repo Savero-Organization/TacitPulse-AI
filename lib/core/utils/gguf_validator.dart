@@ -13,8 +13,7 @@
 //   metadata kv    : (key: GGUF string, value_type: uint32, value)
 //   … tensor info
 //
-// Target yang dicari: keluarga Qwen (arktitektur qwen2 / qwen3 / qwen3.5)
-// dengan ukuran 0.8B / 0.5B (default `qwen3.5-0.8b-q4_k_m.gguf`).
+// Target yang dicari: LiquidAI LFM2.5-350M-Q4_K_M (default) / LFM2.5-230M-Q4_K_M.
 
 import 'dart:convert';
 import 'dart:io';
@@ -34,15 +33,15 @@ class GgufValidationResult {
   /// Benar bila file memulai dengan magic bytes GGUF (`0x46554747`).
   final bool isValidGguf;
 
-  /// Benar bila file terdeteksi sebagai model target keluarga Qwen
+  /// Benar bila file terdeteksi sebagai model target LFM2.5
   /// ukuran 0.8B / 0.5B (via metadata ataupun nama file).
   final bool isTargetModel;
 
   /// Arsitektur GGUF dari metadata `general.architecture`
-  /// (contoh: "qwen2", "qwen3", "llama", null bila tidak terbaca).
+  /// (contoh: "lfm2", "llama", null bila tidak terbaca).
   final String? architecture;
 
-  /// Nama model dari metadata `general.name` (contoh: "Qwen2.5-0.5B-Instruct").
+  /// Nama model dari metadata `general.name` (contoh: "LFM2.5-350M-Instruct").
   final String? modelName;
 
   /// Nama file yang divalidasi.
@@ -61,18 +60,18 @@ class GgufValidator {
   GgufValidator._();
 
   /// Label model target yang diekspektasikan app.
-  static const String targetModelLabel = 'Qwen 3.5 0.8B';
+  static const String targetModelLabel = 'LFM2.5-350M-Q4_K_M';
 
-  /// Arsitektur yang dikenali sebagai keluarga Qwen.
-  static const List<String> _qwenArchMarks = [
-    'qwen2',
-    'qwen3',
-    'qwen3.5',
-    'qwen',
+  /// Marker arsitektur/nama yang dikenali sebagai LFM2.5 ChatML.
+  static const List<String> _lfm2ArchMarks = [
+    'lfm2',
+    'lfm2.5',
+    'liquidai',
+    'liquid',
   ];
 
-  /// Penanda ukuran target (0.8B / 0.5B) pada nama/deskripsi model.
-  static const List<String> _targetSizeMarks = ['0.8b', '0.5b'];
+  /// Penanda ukuran target (350M / 230M) pada nama/deskripsi model.
+  static const List<String> _targetSizeMarks = ['350m', '230m'];
 
   static const int _ggufMagic = 0x46554747;
 
@@ -244,25 +243,25 @@ class GgufValidator {
       if (architecture != null && modelName != null) break;
     }
 
-    final isQwenFamily = _isQwenFamily(architecture, modelName, fileName);
+    final isLfm2Family = _isLfm2Family(architecture, modelName, fileName);
     final matchesTargetSize = _matchesTargetSize(modelName, fileName);
-    final isTarget = isQwenFamily && matchesTargetSize;
+    final isTarget = isLfm2Family && matchesTargetSize;
 
     String? message;
     if (!isTarget) {
-      if (!isQwenFamily) {
+      if (!isLfm2Family) {
         final detected = architecture == null
             ? 'tidak diketahui'
             : '$architecture${modelName == null ? '' : ' ($modelName)'}';
         message =
-            'File GGUF valid, tetapi bukan model Qwen. Arsitektur terdeteksi: '
+            'File GGUF valid, tetapi bukan model LFM2.5. Arsitektur terdeteksi: '
             '$detected. Diharapkan: $targetModelLabel.';
       } else {
         final detected = modelName ?? '*tidak terbaca / nama file*';
         message =
-            'Arsitektur Qwen cocok, tetapi ukuran model tidak sesuai '
+            'Arsitektur LFM2.5 cocok, tetapi ukuran model tidak sesuai '
             '(terdeteksi "$detected"). Diharapkan ukuran 0.8B atau 0.5B '
-            'dengan quantisasi keluarga Q4 (contoh q4_k_m).';
+            'dengan quantisasi keluarga Q4_K_M/Q4 (contoh q4_k_m).';
       }
     }
 
@@ -276,15 +275,15 @@ class GgufValidator {
     );
   }
 
-  static bool _isQwenFamily(
+  static bool _isLfm2Family(
     String? architecture,
     String? modelName,
     String fileName,
   ) {
     final arch = (architecture ?? '').toLowerCase();
-    if (_qwenArchMarks.any(arch.contains)) return true;
+    if (_lfm2ArchMarks.any(arch.contains)) return true;
     final combined = '${modelName ?? ''} $fileName'.toLowerCase();
-    return _qwenArchMarks.any(combined.contains);
+    return _lfm2ArchMarks.any(combined.contains);
   }
 
   static bool _matchesTargetSize(String? modelName, String fileName) {

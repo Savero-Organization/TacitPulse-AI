@@ -370,6 +370,20 @@ void main() {
   });
 
   group('special token sanitasi per-piece', () {
+    test('multi-line completion response dipertahankan saat stripping', () async {
+      final fake = FakeLLM()
+        ..pieces = Stream.fromIterable(['Jawaban\nmultiline\nyang bersih\n<|im_start|>\n']);
+      final cubit = ChatCubit(llm: fake);
+
+      cubit.startStreaming('q');
+      await pumpEventQueue();
+
+      final assistant = assistantMessage(cubit);
+      expect(assistant.text, 'Jawaban\nmultiline\nyang bersih');
+
+      await cubit.close();
+    });
+
     test('token ChatML utuh & parsial di potongan stream tidak bocor ke UI',
         () async {
       final fake = FakeLLM()

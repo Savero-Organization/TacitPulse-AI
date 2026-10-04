@@ -50,6 +50,9 @@ dependencies:
   shelf_router: ^1.1.4
   crypto: ^3.0.7
   flutter_markdown: ^0.7.7+1
+  google_mlkit_text_recognition: ^0.17.1
+  xml: ^7.1.0
+  archive: ^4.3.0
 
 dev_dependencies:
   flutter_test:

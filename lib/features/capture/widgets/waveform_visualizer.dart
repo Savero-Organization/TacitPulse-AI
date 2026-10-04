@@ -26,7 +26,11 @@ class WaveformVisualizer extends StatelessWidget {
 }
 
 class _WavePainter extends CustomPainter {
-  _WavePainter({required this.samples, required this.color, required this.active});
+  _WavePainter({
+    required this.samples,
+    required this.color,
+    required this.active,
+  });
 
   final List<double> samples;
   final Color color;

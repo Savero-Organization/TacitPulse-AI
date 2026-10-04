@@ -18,8 +18,10 @@
 #ifdef __ANDROID__
 #include <android/log.h>
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "TacitPulse_Native", __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, "TacitPulse_Native", __VA_ARGS__)
 #else
 #define LOGI(...) fprintf(stderr, "[TacitPulse_Native] " __VA_ARGS__)
+#define LOGW(...) fprintf(stderr, "[TacitPulse_Native][WARN] " __VA_ARGS__)
 #endif
 
 // Opaque type declared in tacit_llama.h.

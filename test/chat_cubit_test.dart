@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tacit_pulse_ai/core/models/chat_message.dart';
 import 'package:tacit_pulse_ai/core/native/llm_inference.dart';
-import 'package:tacit_pulse_ai/core/rag/intent_router.dart';
+import 'package:tacit_pulse_ai/core/db/knowledge_chunks_db.dart';
+import 'package:tacit_pulse_ai/core/rag/prompts.dart';
+import 'package:tacit_pulse_ai/core/rag/rag_retriever_service.dart';
 import 'package:tacit_pulse_ai/core/services/translation_service.dart';
 import 'package:tacit_pulse_ai/core/utils/thinking_utils.dart';
 import 'package:tacit_pulse_ai/features/chat/cubit/chat_cubit.dart';
@@ -94,6 +96,39 @@ class FakeLLM implements LLMInference {
   Future<void> dispose() async {}
 }
 
+
+/// Retriever palsu: hanya menjawab seolah menemukan dokumen kompresor untuk
+/// query yang mengandung 'kompresor'; selain itu kosong (prompt umum).
+RagRetrieverService fakeRag() {
+  RetrievedChunk? current;
+  return RagRetrieverService(
+    embedder: (q) async {
+      current = q.toLowerCase().contains('kompresor')
+          ? RetrievedChunk(
+              record: KnowledgeChunkRecord(
+                id: 'c-1',
+                documentName: 'SOP PM-KOM-014: Cold Start Kompresor Screw',
+                page: 3,
+                chunkText: 'Tekanan oli 3,5 bar saat cold start.',
+                x: 0.06,
+                y: 0.28,
+                w: 0.72,
+                h: 0.16,
+                embedding: <double>[],
+                distance: 0.0,
+              ),
+              similarity: 1.0,
+            )
+          : null;
+      return const <double>[1, 0];
+    },
+    search: (v, {k = 0}) =>
+        current == null ? <KnowledgeChunkRecord>[] : [current!.record],
+  );
+}
+
+ChatCubit makeCubit(LLMInference llm) => ChatCubit(llm: llm, rag: fakeRag());
+
 void main() {
   // Pesan yang menyimulasikan detail native (path file, info internal).
   const kNativeDetail =
@@ -106,7 +141,7 @@ void main() {
   test('native error during streaming -> state cleaned up, generic message shown',
       () async {
     final fake = FakeLLM()..errorToThrow = LLMInferenceException(kNativeDetail);
-    final cubit = ChatCubit(llm: fake);
+    final cubit = makeCubit(fake);
 
     cubit.startStreaming('Cara reset alarm AA-221 kompresor?');
     // Status streaming diaktifkan saat memulai.
@@ -129,7 +164,7 @@ void main() {
     final fake = FakeLLM()
       ..pieces = Stream.fromIterable(['Alarm', ' ', 'AA-221', ' ', 'reset']);
 
-    final cubit = ChatCubit(llm: fake);
+    final cubit = makeCubit(fake);
     cubit.startStreaming('hai');
 
     await pumpEventQueue();
@@ -142,25 +177,23 @@ void main() {
     await cubit.close();
   });
 
-  test('model not ready -> mock fallback runs without error note', () async {
-    final cubit = ChatCubit(llm: FakeLLM(ready: false));
+  test('model not ready -> pesan status eksplisit (bukan streaming tiruan)', () async {
+    final cubit = makeCubit(FakeLLM(ready: false));
     cubit.startStreaming('tes');
 
-    // Mock berjalan lewat Timer.periodic (tidak selesai di pumpEventQueue) —
-    // yang dijamin: status streaming ter-set dan belum ada warning apapun.
-    expect(cubit.state.status, ChatStatus.streaming);
+    expect(cubit.state.status, ChatStatus.idle);
     final assistant = assistantMessage(cubit);
-    expect(assistant.isStreaming, isTrue);
-    expect(assistant.text, isNot(contains('⚠️')));
+    expect(assistant.isStreaming, isFalse);
+    expect(assistant.text, contains('Model LLM belum dimuat'));
 
-    await cubit.close(); // membatalkan timer mock
+    await cubit.close();
   });
 
   test('stopStreaming -> generasi berhenti, pesan tetap utuh tanpa warning',
       () async {
     final controller = StreamController<String>(sync: true);
     final fake = FakeLLM()..pieces = controller.stream;
-    final cubit = ChatCubit(llm: fake);
+    final cubit = makeCubit(fake);
 
     cubit.startStreaming('tes stop');
     expect(cubit.state.status, ChatStatus.streaming);
@@ -184,7 +217,7 @@ void main() {
   });
 
   test('stopStreaming di saat idle adalah no-op (tidak crash)', () {
-    final cubit = ChatCubit(llm: FakeLLM(ready: true));
+    final cubit = makeCubit(FakeLLM(ready: true));
     final before = cubit.state;
     cubit.stopStreaming();
     expect(cubit.state.status, before.status);
@@ -221,7 +254,7 @@ void main() {
           kThinkingEndToken,
           '\nPilih Opsi A karena lebih aman.',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('Bandingkan opsi A dan B?');
       await pumpEventQueue();
@@ -254,7 +287,7 @@ void main() {
           '${'x' * 1600}';
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable([longThink, 'Ini jawaban akhir.']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('Apakah aman melanjutkan mesin?');
       await pumpEventQueue();
@@ -274,7 +307,7 @@ void main() {
           'Hmm $kThinkingStartToken $repeated',
           'Jawaban ringkas.',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('tes loop');
       await pumpEventQueue();
@@ -290,7 +323,7 @@ void main() {
         () async {
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['Masih $kThinkingStartToken belum kelar mikir...']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('tes');
       await pumpEventQueue();
@@ -311,7 +344,7 @@ void main() {
           kXmlThinkingEndToken,
           '\nJawaban final.',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('q');
       await pumpEventQueue();
@@ -330,7 +363,7 @@ void main() {
           '${'x' * 1600}';
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable([longThink, 'Ini jawaban akhir.']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('Apakah aman?');
       await pumpEventQueue();
@@ -352,7 +385,7 @@ void main() {
           'im',
           '_end|>',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('cek');
       await pumpEventQueue();
@@ -368,7 +401,7 @@ void main() {
     test('empty model output tetap fallback', () async {
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['<|im_start|>assistant\n<|im_end|>']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('test');
       await pumpEventQueue();
@@ -386,7 +419,7 @@ void main() {
         ..pieces = Stream.fromIterable([
           '<think>cek log sensor</think>Jawaban final',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('cek');
       await pumpEventQueue();
@@ -403,7 +436,7 @@ void main() {
     test('multi-line completion response dipertahankan saat stripping', () async {
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['Jawaban\nmultiline\nyang bersih\n<|im_start|>\n']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('q');
       await pumpEventQueue();
@@ -423,7 +456,7 @@ void main() {
           '<|im_end',
           ' lanjut',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('cek');
       await pumpEventQueue();
@@ -440,7 +473,7 @@ void main() {
         () async {
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['<|im_end', '<|im_start']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('q');
       await pumpEventQueue();
@@ -458,7 +491,7 @@ void main() {
     test('tail <|im_end|> pada jawaban selesai terhapus', () async {
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['Jawaban ringkas.', '<|im_end|>']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('cek');
       await pumpEventQueue();
@@ -470,7 +503,7 @@ void main() {
     test('tail parsial <|im pada piece akhir terhapus dari UI', () async {
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['Jawaban ringkas.', '<|im']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('cek');
       await pumpEventQueue();
@@ -484,7 +517,7 @@ void main() {
     test('fast path salam -> tanpa citation, prompt umum, contextDocs kosong',
         () async {
       final fake = FakeLLM()..pieces = Stream.fromIterable(['Halo!']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('hai, terima kasih');
       await pumpEventQueue();
@@ -500,7 +533,7 @@ void main() {
     test('pertanyaan RAG -> citation dari korpus + prompt operasional',
         () async {
       final fake = FakeLLM()..pieces = Stream.fromIterable(['Tekanan 3,5 bar.']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming(
         'Berapa tekanan oli yang benar saat cold start kompresor screw?',
@@ -518,7 +551,7 @@ void main() {
     test('tidak ada kecocokan korpus -> context dikosongkan (prompt umum)',
         () async {
       final fake = FakeLLM()..pieces = Stream.fromIterable(['Ok.']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('Ceritakan tentang pemeliharaan mesin?');
       await pumpEventQueue();
@@ -541,7 +574,7 @@ void main() {
           '  response',
           ' Jawaban akhir.',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('hai');
       await pumpEventQueue();
@@ -559,7 +592,7 @@ void main() {
         ..pieces = Stream.fromIterable([
           'Prolog  thinking mikir dulu  response Jawaban.',
         ]);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('tes');
       await pumpEventQueue();
@@ -577,7 +610,7 @@ void main() {
     test('path diteruskan ke LLMInference.reloadModel + state ter-emit',
         () async {
       final fake = FakeLLM();
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       final ok = await cubit.loadCustomModel(
         '/home/savero/AI/models/Qwen3.5-0.8B-Q4_K_M.gguf',
@@ -593,7 +626,7 @@ void main() {
 
     test('reload gagal → isModelLoaded false, tidak crash', () async {
       final fake = FakeLLM()..reloadResult = false;
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       final ok = await cubit.loadCustomModel('/models/broken.gguf');
 
@@ -621,7 +654,7 @@ void main() {
 
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['Replace', ' the pump solenoid.']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('ganti solenoid pompa');
       // pumps: preparePrompt (async) + stream + back-translate.
@@ -647,7 +680,7 @@ void main() {
 
       final fake = FakeLLM()
         ..pieces = Stream.fromIterable(['Replace', ' the pump solenoid.']);
-      final cubit = ChatCubit(llm: fake);
+      final cubit = makeCubit(fake);
 
       cubit.startStreaming('ganti solenoid pompa');
       await pumpEventQueue();

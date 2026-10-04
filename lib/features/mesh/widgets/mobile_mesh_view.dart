@@ -84,11 +84,11 @@ class MobileMeshView extends StatelessWidget {
               ),
             const SizedBox(height: 20),
             const SectionHeader(title: 'Knowledge Caches'),
-            for (final item in cacheItems)
+            for (final item in buildCacheItems(state))
               CacheRow(
                 item: item,
                 shared: item.requiresLocalFile
-                    ? state.modelHosted && (sharedCaches[item.name] ?? true)
+                    ? state.modelHosted && (sharedCaches[item.name] ?? false)
                     : (sharedCaches[item.name] ?? true),
                 enabled: !item.requiresLocalFile || state.modelHosted,
                 onToggle: () => onCacheToggle(item.name),
@@ -161,10 +161,12 @@ class MobileMeshView extends StatelessWidget {
 
   Widget _buildNetworkSummary(BuildContext context) {
     final stats = state.meshStats;
-    final self = state.nodes.firstWhere(
-      (n) => n.id == 'node-00' || n.id == state.localDeviceId,
-      orElse: () => state.nodes.first,
-    );
+    final self = state.nodes.isEmpty
+        ? null
+        : state.nodes.firstWhere(
+            (n) => n.id == 'node-00' || n.id == state.localDeviceId,
+            orElse: () => state.nodes.first,
+          );
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -183,7 +185,8 @@ class MobileMeshView extends StatelessWidget {
           const Divider(height: 16),
           _row(Icons.sync_rounded, 'Tersinkron', '${stats.syncedBytesMb} MB'),
           const Divider(height: 16),
-          _row(Icons.battery_std_rounded, 'Baterai', '${self.battery}% · signal ${self.signal}/4'),
+          _row(Icons.battery_std_rounded, 'Baterai',
+              self == null ? '—' : '${self.battery}% · signal ${self.signal}/4'),
         ],
       ),
     );

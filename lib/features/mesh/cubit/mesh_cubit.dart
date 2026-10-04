@@ -1,14 +1,10 @@
 import 'dart:async';
-import 'dart:math' as math;
-
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/models/mesh_node.dart';
 import '../../../core/models/worker_profile.dart';
 import '../../../core/utils/model_loader.dart';
-import '../../mock_data.dart';
-
 class MeshMonitorState {
   const MeshMonitorState({
     required this.nodes,
@@ -19,6 +15,7 @@ class MeshMonitorState {
     this.uptimeTicks = 0,
     this.localDeviceId = 'TEK-LOKAL-01',
     this.modelHosted = false,
+    this.activeModelFileName,
   });
 
   final List<MeshNode> nodes;
@@ -28,6 +25,10 @@ class MeshMonitorState {
   final bool isLocalFullNode;
   final int uptimeTicks;
   final String localDeviceId;
+
+  /// Seeding-sifat: nama file model chat yang sedang di-resolve. Dipakai
+  /// untuk menampilkan item model di Knowledge Caches (default OFF).
+  final String? activeModelFileName;
 
   /// Benar bila node lokal memegang file model GGUF target yang tervalidasi
   /// (hasil [ModelManager.resolveModelPath] != null). Hanya saat bernilai
@@ -42,6 +43,7 @@ class MeshMonitorState {
     WorkerProfile? profile,
     int? uptimeTicks,
     bool? modelHosted,
+    String? activeModelFileName,
   }) {
     return MeshMonitorState(
       nodes: nodes ?? this.nodes,
@@ -52,6 +54,7 @@ class MeshMonitorState {
       uptimeTicks: uptimeTicks ?? this.uptimeTicks,
       localDeviceId: profile?.nodeName ?? localDeviceId,
       modelHosted: modelHosted ?? this.modelHosted,
+      activeModelFileName: activeModelFileName ?? this.activeModelFileName,
     );
   }
 }
@@ -59,15 +62,28 @@ class MeshMonitorState {
 class MeshMonitorCubit extends Cubit<MeshMonitorState> {
   MeshMonitorCubit()
       : super(MeshMonitorState(
-          nodes: MockData.buildNodes(),
-          storage: MockData.buildStorage(),
-          meshStats: MockData.buildMeshStats,
+          nodes: const [],
+          storage: _placeholderStorage,
+          meshStats: const MeshMeshStats(
+            connectedNodes: 0,
+            kbucketsActive: 0,
+            syncedBytesMb: 0,
+          ),
         )) {
     _loadProfile();
     refreshModelStatus();
   }
 
-  final math.Random _rnd = math.Random(7);
+  static const LocalStorageStatus _placeholderStorage = LocalStorageStatus(
+    totalGb: 0,
+    usedGb: 0,
+    modelCacheGb: 0,
+    documents: 0,
+    voiceNotes: 0,
+    modelName: '-',
+    modelSizeMb: 0,
+  );
+
   Timer? _ticker;
 
   Future<void> _loadProfile() async {
@@ -75,7 +91,7 @@ class MeshMonitorCubit extends Cubit<MeshMonitorState> {
     final json = prefs.getString('worker_profile');
     if (json == null || isClosed) return;
     final profile = WorkerProfile.fromJson(json);
-    emit(state.copyWith(profile: profile, nodes: MockData.buildNearbyTechs(profile.nodeName)));
+    emit(state.copyWith(profile: profile, nodes: const []));
   }
 
   /// Cek lokal: apakah node benar-benar memegang model GGUF yang valid
@@ -86,13 +102,18 @@ class MeshMonitorCubit extends Cubit<MeshMonitorState> {
   /// tersedia saat test) → [MeshMonitorState.modelHosted] menjadi `false`.
   Future<void> refreshModelStatus() async {
     var hosted = false;
+    String? name;
     try {
-      hosted = await ModelManager.resolveModelPath() != null;
+      final path = await ModelManager.resolveModelPath();
+      hosted = path != null;
+      name = path == null ? '' : path.split('/').last;
     } catch (_) {
       hosted = false;
+      name = '';
     }
-    if (isClosed || hosted == state.modelHosted) return;
-    emit(state.copyWith(modelHosted: hosted));
+    if (isClosed) return;
+    if (hosted == state.modelHosted && name == state.activeModelFileName) return;
+    emit(state.copyWith(modelHosted: hosted, activeModelFileName: name));
   }
 
   void start() {
@@ -101,30 +122,15 @@ class MeshMonitorCubit extends Cubit<MeshMonitorState> {
 
   void _tick() {
     if (isClosed) return;
-    final now = state;
-    var i = 0;
-    final nodes = now.nodes.map((n) {
-      if (n.status == NodeStatus.offline) return n.copyWith(status: NodeStatus.offline);
-      i++;
-      final status = i % 11 == 0 ? NodeStatus.syncing : NodeStatus.online;
-      return n.copyWith(
-        status: status,
-        peers: math.max(1, n.peers + _rnd.nextInt(3) - 1),
-        cpuLoad: (0.05 + _rnd.nextDouble() * 0.7).clamp(0, 1),
-        battery: (n.battery + _rnd.nextInt(3) - 1).clamp(5, 100),
-        signal: (n.signal + _rnd.nextInt(5) - 2).clamp(1, 4),
-      );
-    }).toList();
-
-    final connected = nodes.where((n) => n.status != NodeStatus.offline).length;
-    emit(now.copyWith(
-      nodes: nodes,
+    final connected =
+        state.nodes.where((n) => n.status != NodeStatus.offline).length;
+    emit(state.copyWith(
       meshStats: MeshMeshStats(
         connectedNodes: connected,
-        kbucketsActive: now.meshStats.kbucketsActive + (_rnd.nextBool() ? 1 : 0),
-        syncedBytesMb: now.meshStats.syncedBytesMb + _rnd.nextInt(3),
+        kbucketsActive: state.meshStats.kbucketsActive,
+        syncedBytesMb: state.meshStats.syncedBytesMb,
       ),
-      uptimeTicks: now.uptimeTicks + 1,
+      uptimeTicks: state.uptimeTicks + 1,
     ));
   }
 
@@ -144,6 +150,7 @@ class MeshMonitorCubit extends Cubit<MeshMonitorState> {
       uptimeTicks: state.uptimeTicks,
       localDeviceId: state.localDeviceId,
       modelHosted: state.modelHosted,
+      activeModelFileName: state.activeModelFileName,
     ));
   }
 

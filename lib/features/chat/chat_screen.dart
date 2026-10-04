@@ -4,7 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/downloads/model_download_service.dart';
-import '../../core/rag/pdf_ingest_store.dart';
+import '../../core/rag/knowledge_ingest_service.dart';
 import '../../core/models/citation.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/model_loader.dart';
@@ -38,12 +38,8 @@ class _ChatView extends StatefulWidget {
 class _ChatViewState extends State<_ChatView> {
   final TextEditingController _controller = TextEditingController();
 
-  // State Riwayat Chat
-  final List<String> _chatSessions = [
-    'Cold Start Kompresor GA75',
-    'Anomali Pressure Switch AA-221',
-    'Maintenance Boiler Shift A',
-  ];
+  // State Riwayat Chat (diisi dari percakapan nyata, tidak ada placeholder).
+  final List<String> _chatSessions = [];
   int _activeSessionIndex = 0;
 
   // State List Berkas SOP / Knowledge Base
@@ -63,13 +59,49 @@ class _ChatViewState extends State<_ChatView> {
     _selectedDocs = {for (final d in _sourceDocsList) d.name};
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<ChatCubit>().init();
+      if (!mounted) return;
+      context.read<ChatCubit>().init();
+      _maybePromptEssentials();
     });
 
     // Unduhan model latar belakang selesai (di tab mana pun) → reload LLM
     // otomatis. reloadModel coalescing di ChatCubit mencegah reload ganda
     // (sumber ganda: sheet + listener ini) saat sheet masih terbuka.
     ModelDownloadService.instance.addListener(_onDownloadServiceChanged);
+  }
+
+  /// Modal satu kali bila berkas esensial belum ada: bisa unduh embedding
+  /// model lewat [ModelDownloadService] (progress di status bar global).
+  Future<void> _maybePromptEssentials() async {
+    if (await ModelManager.ensureEmbeddingModelReady()) return;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Berkas Esensial Belum Ada'),
+        content: const Text(
+          'Model embedding multilingual-e5-small belum terpasang. '
+          'Unduh sekali (≈131 MB) supaya aplikasi bisa menjawab dari dokumen.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('Nanti'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(dialogCtx).pop();
+              ModelDownloadService.instance.startDownload(
+                url: ModelManager.embeddingModelDownloadUrl,
+                fileName: ModelManager.embeddingModelName,
+              );
+            },
+            child: const Text('Unduh'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -182,7 +214,7 @@ class _ChatViewState extends State<_ChatView> {
 
       var progressActive = true;
       try {
-        final chunkCount = await ingestPdf(path);
+        final chunkCount = await KnowledgeIngestService().ingestPath(path);
         if (!mounted) return;
 
         if (chunkCount > 0) {
@@ -614,12 +646,7 @@ class _SourceDoc {
       : AppColors.cyanAccent;
 }
 
-const _defaultSourceDocs = [
-  _SourceDoc('SOP_Kompresor_Screw.pdf', 'PDF'),
-  _SourceDoc('SOP_Cold_Start_Boiler.pdf', 'PDF'),
-  _SourceDoc('Log_Anomali_Line2.log', 'LOG'),
-  _SourceDoc('Worklog_Shift_A12.txt', 'LOG'),
-];
+const _defaultSourceDocs = <_SourceDoc>[];
 
 class _ExplorerSidebar extends StatefulWidget {
   const _ExplorerSidebar({

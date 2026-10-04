@@ -63,4 +63,6 @@ dev_dependencies:
   plugin_platform_interface: ^2.1.8
 
 flutter:
-  uses-material-design: true 
+  uses-material-design: true
+  assets:
+    - assets/knowledge/case1_manufacturing_knowledge_hub.zip 

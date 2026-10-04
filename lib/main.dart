@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/downloads/model_download_service.dart';
+import 'core/rag/knowledge_ingest_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/onboarding_screen.dart';
@@ -16,6 +19,8 @@ void main() {
   );
   WidgetsBinding.instance.addObserver(lifecycle);
   ModelDownloadService.instance.restorePending();
+  // Seed index vektor dokumen Case 1 sekali (background) — tidak memblokir UI.
+  unawaited(KnowledgeIngestService().ensureSeeded());
   runApp(const TacitPulseApp());
 }
 

@@ -27,9 +27,7 @@ class MeshScreen extends StatefulWidget {
 
 class _MeshScreenState extends State<MeshScreen> {
   final math.Random _rnd = math.Random(11);
-  final Map<String, bool> _sharedCaches = {
-    for (final c in cacheItems) c.name: true,
-  };
+  final Map<String, bool> _sharedCaches = {};
 
   Timer? _timer;
   double _upRate = 1.4;
@@ -171,13 +169,15 @@ class _MeshScreenState extends State<MeshScreen> {
   /// ([MeshMonitorState.modelHosted] false) TIDAK bisa di-toggle — switch
   /// sudah dikunci-off di UI, ini jaring pengaman tambahan.
   void _toggleCache(String name, MeshMonitorState state) {
-    final candidates = cacheItems.where((c) => c.name == name).toList();
+    final candidates = buildCacheItems(state).where((c) => c.name == name).toList();
     if (candidates.isNotEmpty &&
         candidates.first.requiresLocalFile &&
         !state.modelHosted) {
       return;
     }
-    setState(() => _sharedCaches[name] = !(_sharedCaches[name] ?? true));
+    final previous = _sharedCaches[name] ??
+        (candidates.isNotEmpty && candidates.first.requiresLocalFile ? false : true);
+    setState(() => _sharedCaches[name] = !previous);
   }
 
   Widget _buildDraggableFab(BuildContext context, MeshMonitorState state, Size size) {

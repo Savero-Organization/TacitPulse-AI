@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
 /// Satu baris teks hasil ekstraksi PDF + bbox ternormalisasi (0..1)
-/// relatif terhadap halamannya. Konvensi sama dengan `KnowledgeChunk` /
+/// relatif terhadap halamannya. Konvensi sama dengan `KnowledgeChunkRecord` /
 /// `SourceCitation.boundingBox`: kiri-atas halaman = (0,0), satuan poin PDF
 /// sudah dibagi dengan ukuran halaman.
 class PdfTextLine {

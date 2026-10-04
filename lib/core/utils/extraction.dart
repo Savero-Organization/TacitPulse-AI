@@ -56,7 +56,7 @@ class ExtractionResult {
 
 /// Layer ekstraksi yang dipakai bersama oleh ChatCubit/ModelManager.
 class NativeExtractionLayer {
-  const NativeExtractionLayer._();
+  const NativeExtractionLayer();
 
   Future<ExtractionResult> extract(String path) async {
     final type = detectDocumentType(path);

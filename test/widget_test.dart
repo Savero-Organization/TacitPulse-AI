@@ -33,6 +33,5 @@ void main() {
     expect(find.text('AirDrop'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
     expect(find.text('Capture'), findsOneWidget);
-    expect(find.text('Eko Prasetyo'), findsOneWidget);
   });
 }

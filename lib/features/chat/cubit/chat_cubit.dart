@@ -1,18 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/db/knowledge_chunks_db.dart';
 import '../../../core/models/chat_message.dart';
+import '../../../core/models/citation.dart';
 import '../../../core/native/llm_inference.dart';
-import '../../../core/rag/intent_router.dart';
+import '../../../core/rag/prompts.dart';
+import '../../../core/rag/rag_retriever_service.dart';
 import '../../../core/services/translation_service.dart';
 import '../../../core/utils/chatml.dart';
 import '../../../core/utils/gguf_validator.dart' show ModelFamily;
 import '../../../core/utils/model_loader.dart';
 import '../../../core/utils/thinking_utils.dart';
-import '../../mock_data.dart';
 
 enum ChatStatus { idle, streaming, recording, paused }
 
@@ -91,23 +94,39 @@ class ChatState {
 }
 
 /// Cubit RAG chat: output token real dari llama.cpp (via FFI) di-streaming
-/// ke UI. Kalau model belum ter-load (tidak ada .gguf), jatuh ke simulasi
-/// mock supaya demo tetap berjalan.
+/// ke UI. Retrieval memakai RagRetrieverService (KNN cosine di tabel vec0
+/// `knowledge_chunks`); bila model belum ter-load, tampilkan pesan status
+/// eksplisit (bukan streaming tiruan).
+/// Keputusan retrieval RAG untuk satu pertanyaan: systemPrompt, contextDocs,
+/// dan citation yang diinjeksikan ke prompt + ditampilkan di UI.
+class _Decision {
+  const _Decision({
+    required this.systemPrompt,
+    required this.contextDocs,
+    required this.citations,
+  });
+
+  final String systemPrompt;
+  final String contextDocs;
+  final List<SourceCitation> citations;
+}
+
 class ChatCubit extends Cubit<ChatState> {
-  ChatCubit({LLMInference? llm})
+  ChatCubit({LLMInference? llm, RagRetrieverService? rag})
     : _llm = llm ?? LLMInference.instance,
-      super(ChatState(messages: MockData.buildMessages()));
+      _ragOverride = rag,
+      super(const ChatState());
 
   final LLMInference _llm;
+  final RagRetrieverService? _ragOverride;
+  RagRetrieverService? _cachedRag;
 
   /// Pesan error startup native terakhir dari [LLMInference] (mis. C-API
   /// gagal alokasi RAM / quant incompatible), atau `null` bila sukses.
   /// Dipakai UI untuk menampilkan alasan kegagalan engine LLM Native.
   String? get startupError => _llm.startupError;
 
-  Timer? _tokenTimer;
   StreamSubscription<String>? _llmSub;
-  int _wordIndex = 0;
   /// Buffer mentah hasil stream native. Sengaja TIDAK di-strip per-piece:
   /// memangkas token kontrol parsial (mis. `<|im_end`) di tengah stream akan
   /// merusak rangkaian token. Sanitasi dilakukan secara stateless dari
@@ -210,7 +229,6 @@ class ChatCubit extends Cubit<ChatState> {
   /// Menghentikan generasi yang sedang berjalan (streaming).
   void stopGenerating() {
     _llm.stopGeneration();
-    _tokenTimer?.cancel();
     _llmSub?.cancel();
     if (!isClosed && state.status == ChatStatus.streaming) {
       final msgs = state.messages.map((m) {
@@ -227,7 +245,6 @@ class ChatCubit extends Cubit<ChatState> {
   /// [ChatMessage.thinkingSeconds], lalu menandai pesan selesai (bukan error).
   void stopStreaming() {
     if (isClosed || state.status != ChatStatus.streaming) return;
-    _tokenTimer?.cancel();
     _llmSub?.cancel();
     _llmSub = null;
     _llm.stopGeneration();
@@ -245,7 +262,7 @@ class ChatCubit extends Cubit<ChatState> {
     stopGenerating();
     await _llm.resetContext();
     if (!isClosed) {
-      emit(ChatState(messages: MockData.buildMessages()));
+      emit(ChatState(isModelLoaded: state.isModelLoaded));
     }
   }
 
@@ -254,10 +271,9 @@ class ChatCubit extends Cubit<ChatState> {
         state.status == ChatStatus.recording) {
       return;
     }
-    // Routing intent shallow: fast path (salam/math/frasa pendek) lewat tanpa
-    // RAG; pertanyaan operasional di-skoring ke korpus (ambang 0.35). Keputusan
-    // dipakai untuk systemPrompt, contextDocs, dan citation yang ditampilkan.
-    final decision = IntentRouter.instance.route(question);
+    // Retrieval RAG via KNN cosine di vec0 `knowledge_chunks` (ganti korpus
+    // demo). Keputusan dipakai untuk systemPrompt, contextDocs, dan citation.
+    final retrieval = _retrieve(question);
 
     // Snapshot riwayat SEBELUM turn baru ditambahkan, untuk context prompt.
     final history = List<ChatMessage>.of(state.messages);
@@ -281,7 +297,6 @@ class ChatCubit extends Cubit<ChatState> {
             text: '',
             timestamp: DateTime.now(),
             isStreaming: true,
-            citations: decision.citations,
           ),
         ],
         status: ChatStatus.streaming,
@@ -290,10 +305,73 @@ class ChatCubit extends Cubit<ChatState> {
     );
 
     if (_llm.isReady) {
-      unawaited(_startNativeTurn(question, history, decision: decision));
+      unawaited(_startNativeTurn(question, history, retrieval: retrieval));
     } else {
-      _streamMock();
+      _emitModelNotReady();
     }
+  }
+
+  /// Hasil retrieval RAG untuk satu pertanyaan: chunk yang relevan ->
+  /// systemPrompt + contextDocs + citation yang diinjeksikan ke prompt.
+  Future<_Decision> _retrieve(String question) async {
+    final rag = _ragOverride ?? await _defaultRag();
+    List<RetrievedChunk> chunks = const [];
+    try {
+      chunks = await rag.retrieve(question, topK: 4, minScore: 0.30);
+    } catch (_) {
+      chunks = const [];
+    }
+    final usesRag = chunks.isNotEmpty;
+    return _Decision(
+      systemPrompt: usesRag ? kOperationalSystemPrompt : kGeneralSystemPrompt,
+      contextDocs: usesRag
+          ? chunks
+                .map((c) => '[${chunks.indexOf(c) + 1}] '
+                    '${c.record.documentName} (hlm. ${c.record.page}): '
+                    '${c.record.chunkText}\n')
+                .join('')
+                .trim()
+          : '',
+      citations: chunks.map(_citationFromChunk).toList(),
+    );
+  }
+
+  Future<RagRetrieverService> _defaultRag() async {
+    if (_cachedRag != null) return _cachedRag!;
+    final db = await KnowledgeChunksDb.open();
+    _cachedRag = RagRetrieverService(db: db);
+    return _cachedRag!;
+  }
+
+  SourceCitation _citationFromChunk(RetrievedChunk chunk) {
+    return SourceCitation(
+      id: chunk.record.id,
+      title: chunk.record.documentName,
+      type: CitationType.pdf,
+      page: chunk.record.page,
+      snippet: chunk.record.chunkText,
+      score: chunk.similarity.clamp(0.0, 1.0),
+      boundingBox: Rect.fromLTWH(
+        chunk.record.x,
+        chunk.record.y,
+        chunk.record.w,
+        chunk.record.h,
+      ),
+    );
+  }
+
+  /// Saat model LLM belum siap: pesan status eksplisit (bukan streaming tiruan).
+  void _emitModelNotReady() {
+    final msgs = state.messages.map((m) {
+      if (!m.isStreaming) return m;
+      return m.copyWith(
+        text:
+            'Model LLM belum dimuat. Pasang/pilih model GGUF di Pengaturan '
+            'sebelum mengirim pesan.',
+        isStreaming: false,
+      );
+    }).toList();
+    emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
   }
 
   /// Jalankan satu turn native: siapkan prompt lewat cascade translation
@@ -302,8 +380,16 @@ class ChatCubit extends Cubit<ChatState> {
   Future<void> _startNativeTurn(
     String question,
     List<ChatMessage> history, {
-    required RoutingDecision decision,
+    required Future<_Decision> retrieval,
   }) async {
+    final decision = await retrieval;
+    if (isClosed) return;
+    // Seed citasi pada bubble streaming setelah retrieval siap.
+    final withCitations = state.messages.map((m) {
+      if (!m.isStreaming) return m;
+      return m.copyWith(citations: decision.citations);
+    }).toList();
+    emit(state.copyWith(messages: withCitations));
     final prepared = await _preparePrompt(question);
     if (isClosed) return;
     _streamNative(
@@ -348,7 +434,7 @@ class ChatCubit extends Cubit<ChatState> {
   void _streamNative(
     String question,
     List<ChatMessage> history, {
-    required RoutingDecision decision,
+    required _Decision decision,
     bool promptWasTranslated = false,
   }) {
     _thinkOpen = false;
@@ -586,38 +672,6 @@ class ChatCubit extends Cubit<ChatState> {
     }
   }
 
-  /// Fallback simulasi (dipakai kalau model belum ada / native tidak siap).
-  void _streamMock() {
-    _wordIndex = 0;
-    _tokenTimer?.cancel();
-    _tokenTimer = Timer.periodic(const Duration(milliseconds: 140), (_) {
-      if (isClosed) return;
-      final words = MockData.streamWords;
-      if (_wordIndex >= words.length) {
-        _tokenTimer?.cancel();
-        final msgs = state.messages
-            .map((m) => m.isStreaming ? m.copyWith(isStreaming: false) : m)
-            .toList();
-        emit(state.copyWith(messages: msgs, status: ChatStatus.idle));
-        return;
-      }
-      final next = _wordIndex <= words.length ? words[_wordIndex] : '';
-      final msgs = state.messages.map((m) {
-        if (!m.isStreaming) return m;
-        return ChatMessage(
-          id: m.id,
-          role: m.role,
-          text: m.text.isEmpty ? next : '${m.text} $next',
-          timestamp: m.timestamp,
-          isStreaming: true,
-          citations: m.citations,
-        );
-      }).toList();
-      _wordIndex++;
-      emit(state.copyWith(messages: msgs));
-    });
-  }
-
   /// Placeholder rekaman suara: whisper.cpp akan mengembalikan
   /// teks hasil transkripsi on-device.
   void startVoiceRecording() {
@@ -645,7 +699,6 @@ class ChatCubit extends Cubit<ChatState> {
 
   @override
   Future<void> close() {
-    _tokenTimer?.cancel();
     _llmSub?.cancel();
     _llm.dispose();
     return super.close();

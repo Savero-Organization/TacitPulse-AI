@@ -20,6 +20,16 @@ void main() {
       ? 'set TACIT_EMBED_MODEL_ROOT (+ LD_LIBRARY_PATH libtacit_llama.so)'
       : false;
 
+  test("AAA", () async {
+    ModelPaths.dataRootOverride = () async => Directory(Platform.environment['TACIT_EMBED_MODEL_ROOT']!);
+    addTearDown(() => ModelPaths.dataRootOverride = null);
+    final longText = List.generate(300, (i) => 'inspeksi suku cadang mesin $i tekanan 3.5 bar').join(' ');
+    final r = await getEmbedding('query: $longText');
+    expect(r, hasLength(384));
+    final norm = r.fold<double>(0, (acc, v) => acc + v * v);
+    expect(norm, lessThan(1.01));
+  }, skip: skipReason);
+
   test('getEmbedding: 384 dim, L2-norm 1, deterministik', () async {
     ModelPaths.dataRootOverride = () async => Directory(modelRoot!);
     addTearDown(() => ModelPaths.dataRootOverride = null);

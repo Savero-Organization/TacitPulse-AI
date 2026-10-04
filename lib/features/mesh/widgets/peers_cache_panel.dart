@@ -26,17 +26,18 @@ class CacheItem {
   final bool requiresLocalFile;
 }
 
-const List<CacheItem> cacheItems = [
-  CacheItem('SOP PM-KOM-014', 'SOP', '1.2 MB', Icons.description_rounded),
-  CacheItem('Log Anomali Line 2', 'LOG', '240 KB', Icons.text_snippet_rounded),
-  CacheItem(
-    'LFM2.5-350M-Q4_K_M.gguf',
-    'MODEL',
-    '620 MB',
-    Icons.memory_rounded,
-    requiresLocalFile: true,
-  ),
-];
+/// Model cache yang dapat di-share sebagai knowledge caches, disusun dinamis
+/// dari model chat yang sedang di-resolve [ModelManager.resolveModelPath] —
+/// bukan daftar template statis yang tidak punya file nyata. Default-nya OFF:
+/// user menyalakan sendiri switch "seeder" bila bersedia mem-cache model.
+List<CacheItem> buildCacheItems(MeshMonitorState state) {
+  final name = state.activeModelFileName;
+  if (name == null || name.isEmpty) return const <CacheItem>[];
+  return <CacheItem>[
+    CacheItem(name, 'MODEL', 'GGUF', Icons.memory_rounded,
+        requiresLocalFile: true),
+  ];
+}
 
 /// Panel sidebar desktop: daftar peers aktif + cache pengetahuan yang dibagikan.
 class PeersSharedCachesPanel extends StatelessWidget {
@@ -91,12 +92,12 @@ class PeersSharedCachesPanel extends StatelessWidget {
                   ),
                 const SizedBox(height: 18),
                 const SectionHeader(title: 'Knowledge Caches'),
-                for (final item in cacheItems)
+                for (final item in buildCacheItems(state))
                   CacheRow(
                     item: item,
                     shared: item.requiresLocalFile
                         ? state.modelHosted &&
-                            (sharedCaches[item.name] ?? true)
+                            (sharedCaches[item.name] ?? false)
                         : (sharedCaches[item.name] ?? true),
                     enabled:
                         !item.requiresLocalFile || state.modelHosted,

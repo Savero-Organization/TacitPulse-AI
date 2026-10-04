@@ -328,7 +328,7 @@ bool generate_int(tacit_model * h,
 
 // Batas panjang input embedding (token) — jendela latih multilingual-e5-small.
 // Teks lebih panjang dipotong (ceilings; upgrade path: chunk-and-average).
-constexpr int kEmbeddingMaxTokens = 512;
+constexpr int kEmbeddingMaxTokens = 256;
 
 // Core embedding path: tokenize -> decode -> pool (MEAN dari GGUF pooling
 // metadata; fallback mean manual bila pooling NONE) ke buffer mentah.
@@ -369,11 +369,15 @@ int embed_int(tacit_model * h,
     // pos = NULL -> posisi dilacak otomatis (0..n-1); seq_id = NULL -> seq 0;
     // logits = NULL + embeddings -> semua token output (lihat llama.h).
     llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
-    const int32_t rc = llama_decode(h->ctx, batch);
+    // Model enkoder (e5) wajib lewat llama_encode. llama_decode pada
+    // konteks enkoder tidak valid (log "decode: cannot decode batches ...
+    // calling encode() instead") dan crash di pooling get_rows; llama_encode
+    // memakai path enkoder (non-causal) sehingga hasil pooling benar.
+    const int32_t rc = llama_encode(h->ctx, batch);
     if (rc != 0) {
         error = rc == 1
-                    ? "llama_decode: KV cache full (increase context size)"
-                    : "llama_decode(embedding) failed";
+                    ? "llama: memory state error"
+                    : "llama_encode(embedding) failed";
         return -1;
     }
 

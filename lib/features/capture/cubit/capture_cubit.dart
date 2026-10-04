@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/models/tacit_note.dart';
-import '../../mock_data.dart';
 
 enum CaptureStatus { idle, recording, transcribing, drafting }
 
@@ -47,7 +46,7 @@ class CaptureState {
 /// Cubit perekaman tacit: waveform visualizer realtime + konversi
 /// voice note menjadi draft SOP terstruktur (whisper.cpp nanti).
 class CaptureCubit extends Cubit<CaptureState> {
-  CaptureCubit() : super(CaptureState(notes: MockData.buildNotes()));
+  CaptureCubit() : super(const CaptureState());
 
   final math.Random _rnd = math.Random(3);
   Timer? _waveTimer;
@@ -137,7 +136,7 @@ class CaptureCubit extends Cubit<CaptureState> {
       line: 'Line 2 - Pressing',
       durationSeconds: seconds,
       recordedAt: DateTime.now(),
-      waveform: MockData.buildWaveform(64),
+      waveform: List<double>.filled(64, 0.05),
       transcribedText:
           'Filter hydraulic press bisa dibersihkan tanpa hentikan mesin kalau unit idle. '
           'Buka cover akses kanan, lepas 2 clamp, filter ditarik pelan ke atas. '

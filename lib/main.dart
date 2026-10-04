@@ -7,6 +7,7 @@ import 'core/downloads/model_download_service.dart';
 import 'core/rag/knowledge_ingest_service.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
+import 'features/auth/login_screen.dart';
 import 'features/auth/onboarding_screen.dart';
 import 'features/shell/app_shell.dart';
 
@@ -33,6 +34,7 @@ class TacitPulseApp extends StatefulWidget {
 
 class _TacitPulseAppState extends State<TacitPulseApp> {
   bool? _onboardingComplete;
+  bool? _loggedIn;
   VoidCallback? _refresh;
 
   @override
@@ -45,12 +47,17 @@ class _TacitPulseAppState extends State<TacitPulseApp> {
   Future<void> _checkOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     final done = prefs.getBool('onboarding_complete') ?? false;
-    setState(() => _onboardingComplete = done);
+    // Belum login = belum pernah lolos halaman login (flag `logged_in`).
+    final loggedIn = prefs.getBool('logged_in') ?? false;
+    setState(() {
+      _onboardingComplete = done;
+      _loggedIn = loggedIn;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_onboardingComplete == null) {
+    if (_onboardingComplete == null || _loggedIn == null) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.dark,
@@ -58,13 +65,17 @@ class _TacitPulseAppState extends State<TacitPulseApp> {
       );
     }
 
+    // Urutan gerbang: onboarding (sekali — bikin profil) → login (kalau
+    // belum `logged_in`) → app.
     return MaterialApp(
       title: 'TacitPulse AI',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,
-      home: _onboardingComplete!
-          ? AppShell(onRefreshProfile: _refresh!)
-          : OnboardingScreen(onComplete: _refresh!),
+      home: !_onboardingComplete!
+          ? OnboardingScreen(onComplete: _refresh!)
+          : !_loggedIn!
+              ? LoginScreen(onLogin: _refresh!)
+              : AppShell(onRefreshProfile: _refresh!),
     );
   }
 }

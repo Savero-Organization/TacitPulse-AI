@@ -24,7 +24,7 @@ class _AirdropRadarState extends State<AirdropRadar> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 3))
+    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 4))
       ..repeat();
   }
 
@@ -55,17 +55,30 @@ class _AirdropRadarState extends State<AirdropRadar> with SingleTickerProviderSt
                         if (hit != null) widget.onNodeTap(hit);
                       },
                       child: const Center(
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          PulseDot(color: AppColors.industrialAmber, size: 14),
-                          SizedBox(height: 6),
-                          Text('ANDA',
-                              style: TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1.2,
-                              )),
-                        ]),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            // Dot = satu-satunya child non-positioned, jadi
+                            // ukuran stack = dot → Center menaruhnya TEPAT
+                            // di pusat radar (tanpa penyeimbang).
+                            PulseDot(color: AppColors.industrialAmber, size: 14),
+                            // Label diposisikan absolut di bawah dot:
+                            // top = 14 (tinggi dot) + 6 (gap).
+                            Positioned(
+                              top: 20,
+                              left: -40,
+                              right: -40,
+                              child: Text('ANDA',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 1.2,
+                                  )),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -115,18 +128,35 @@ class _RadarPainter extends CustomPainter {
     canvas.drawLine(center - Offset(radius, 0), center + Offset(radius, 0), gridPaint);
     canvas.drawLine(center - Offset(0, radius), center + Offset(0, radius), gridPaint);
 
-    // Sweep beam.
     final sweepAngle = 2 * math.pi * sweep - math.pi / 2;
+
+    // Trail di belakang garis: 16 irisan pai memudar (ekor 120°) — murni
+    // geometri drawArc dari `sweepAngle` yang sama dengan garis, jadi selalu
+    // ikut muter; bentuk di sweep=1 identik dengan sweep=0 → wrap seamless.
+    const kTrailSlices = 16;
+    const kTrailSpan = 2 * math.pi / 3;
+    const kTrailStep = kTrailSpan / kTrailSlices;
+    for (var i = 0; i < kTrailSlices; i++) {
+      final fade = i / (kTrailSlices - 1); // 0 = ujung ekor, 1 = dekat garis
+      final trailPaint = Paint()
+        ..color = AppColors.cyanAccent.withValues(alpha: 0.24 * fade)
+        ..style = PaintingStyle.fill;
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        sweepAngle - kTrailSpan + i * kTrailStep,
+        kTrailStep,
+        true,
+        trailPaint,
+      );
+    }
+
+    // Garis sweep: dari pusat ke tepi, muter penuh 360° tiap siklus.
     final sweepPaint = Paint()
-      ..shader = SweepGradient(
-        startAngle: sweepAngle - 0.6,
-        endAngle: sweepAngle,
-        colors: [
-          AppColors.cyanAccent.withValues(alpha: 0.0),
-          AppColors.cyanAccent.withValues(alpha: 0.12),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, sweepPaint);
+      ..color = AppColors.cyanAccent.withValues(alpha: 0.55)
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    final tip = center + Offset(math.cos(sweepAngle), math.sin(sweepAngle)) * radius;
+    canvas.drawLine(center, tip, sweepPaint);
 
     // Node lokal (self).
     canvas.drawCircle(center, 10, Paint()..color = AppColors.deepCharcoal);

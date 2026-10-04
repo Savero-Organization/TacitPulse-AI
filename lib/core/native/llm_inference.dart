@@ -187,6 +187,7 @@ class LLMInference {
   Future<bool> initialize({String? modelFile}) async {
     if (_worker != null) return _ready;
 
+    await ModelManager.refreshModelNameCache();
     final path =
         await ModelManager.resolveModelPath(modelFile ?? defaultModelFile);
     if (path == null) {
@@ -198,6 +199,9 @@ class LLMInference {
     }
 
     _modelPath = path;
+    // Badge UI harus mencerminkan model yang BENAR-BENAR dimuat, bukan
+    // string hardcode lama.
+    ModelManager.activeModelFileName = path;
     _modelFileExists = await File(path).exists();
     if (!_modelFileExists) {
       _startupError = 'Model belum ada: $path';
@@ -270,8 +274,13 @@ class LLMInference {
           // (tanpa trim — menghilangkan spasi per-piece merusak penggabungan
           // kalimat di ChatCubit).
           final cleaned = stripSpecialTokens(text);
+          log(
+            '[LLMInference] piece raw="${_esc(text)}" '
+            'cleaned="${_esc(cleaned)}"',
+          );
           if (cleaned.isNotEmpty) yield cleaned;
         } else if (type == 'done') {
+          log('[LLMInference] stream done');
           break;
         } else if (type == 'error') {
           final message =
@@ -356,8 +365,12 @@ class LLMInference {
   /// di prompt sistem — kosong bila tidak ada context.
   String _buildChatPrompt(String system, String user, {String? contextDocs}) {
     final buf = StringBuffer();
-    // LFM2.5 context sequence MUST begin with BOS <|startoftext|>
-    buf.write('<|startoftext|>');
+    // JANGAN menulis '<|startoftext|>' sebagai teks di sini. Token kontrol
+    // hanya dikenali sebagai id khusus bila di-parse native
+    // (parse_special=true); sebagai substring biasa llama_tokenize()
+    // memecahnya menjadi karakter literal sehingga prompt rusak dan model
+    // langsung menghasilkan EOS. BOS disuntikkan di level token oleh
+    // tacit_llama.cpp.
     buf.write('<|im_start|>system\n$system');
     final context = contextDocs == null || contextDocs.isEmpty
         ? ''
@@ -582,6 +595,10 @@ String? _nativeError(TacitLlamaBindings bindings) {
   if (ptr == nullptr) return null;
   return _utf8String(ptr);
 }
+
+/// Escape string untuk log piece: making line breaks & newline terlihat agar
+/// piece kosong / whitespace-only bisa dibedakan di terminal.
+String _esc(String s) => jsonEncode(s);
 
 /// Decode string UTF-8 null-terminated dari native dengan toleransi malformed
 /// byte (menjadi U+FFFD, tidak melempar). Native dijamin UTF-8 oleh llama.cpp

@@ -567,4 +567,40 @@ class ModelManager {
     // Tier 4 — tidak tersedia. Serahkan ke pemanggil (download / sync sheet).
     return null;
   }
+
+  /// Label ringkas model aktif untuk badge UI.
+  ///
+  /// Ambil nama file/path model yang benar-benar dimuat (bukan string
+  /// hardcode) lalu buang ekstensi + suffix kuantisasi agar pendek
+  /// (mis. `LFM2.5-350M-Q4_K_M.gguf` -> `LFM2.5-350M`).
+  static String displayLabel([String? pathOrName]) {
+    var name = (pathOrName == null || pathOrName.trim().isEmpty)
+        ? defaultModelName
+        : pathOrName.trim();
+    // Ambil nama file dari path penuh bila perlu.
+    final slash = name.lastIndexOf(RegExp(r'[/\\]'));
+    if (slash >= 0) name = name.substring(slash + 1);
+    if (name.toLowerCase().endsWith('.gguf')) {
+      name = name.substring(0, name.length - '.gguf'.length);
+    }
+    // Buang suffix kuantisasi (-Q4_K_M, -Q8_0, dst).
+    name = name.replaceAll(RegExp(r'[-_](Q\d+(_[A-Za-z0-9]+)*|IQ\d[^ ]*)$'), '');
+    return name.isEmpty ? 'LFM2.5-350M' : name;
+  }
+
+  /// Nama file model aktif (file GGUF yang termuat), atau null bila belum ada.
+  static String? activeModelFileName;
+
+  /// Nama model aktif untuk UI. Mengutamakan path yang benar-benar dimuat,
+  /// lalu custom path, lalu default LFM2.5-350M.
+  static String get currentModelName =>
+      displayLabel(activeModelFileName ?? _cachedCustomModelPath);
+
+  static String? _cachedCustomModelPath;
+
+  /// Sinkronkan cache custom path agar [currentModelName] tidak perlu Future
+  /// di widget build. Dipanggil saat init model & saat user memilih path.
+  static Future<void> refreshModelNameCache() async {
+    _cachedCustomModelPath = await getCustomModelPath();
+  }
 }

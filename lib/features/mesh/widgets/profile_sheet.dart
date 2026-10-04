@@ -200,7 +200,7 @@ class _ProfileSheetState extends State<ProfileSheet> {
                     children: [
                       const PulseDot(color: AppColors.success),
                       const SizedBox(width: 8),
-                      const Expanded(child: Text('Qwen 3.5-0.8B Q4_K_M', style: MonoStyles.value)),
+                      const Expanded(child: Text('LFM2.5-350M-Q4_K_M', style: MonoStyles.value)),
                       Text('620 MB', style: MonoStyles.small),
                     ],
                   ),

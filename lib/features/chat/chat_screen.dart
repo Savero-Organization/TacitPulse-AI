@@ -7,6 +7,7 @@ import '../../core/downloads/model_download_service.dart';
 import '../../core/rag/pdf_ingest_store.dart';
 import '../../core/models/citation.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/model_loader.dart';
 import '../../core/widgets/model_path_picker_sheet.dart';
 import '../../core/widgets/profile_app_bar_action.dart';
 import '../../core/widgets/responsive_shell.dart';
@@ -512,9 +513,9 @@ class _ChatViewState extends State<_ChatView> {
                 size: 7,
               ),
               const SizedBox(width: 6),
-              const Text(
-                'Qwen 3.5-0.8B',
-                style: TextStyle(
+              Text(
+                ModelManager.currentModelName,
+                style: const TextStyle(
                   color: AppColors.textSecondary,
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
@@ -1098,13 +1099,16 @@ class _StreamingBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 16),
       color: AppColors.cyanAccent.withValues(alpha: 0.12),
-      child: const Row(
+      child: Row(
         children: [
-          PulseDot(color: AppColors.cyanAccent),
-          SizedBox(width: 8),
+          const PulseDot(color: AppColors.cyanAccent),
+          const SizedBox(width: 8),
           Text(
-            'Streaming token · llama.cpp (Qwen 3.5-0.8B Q4_K_M)',
-            style: TextStyle(color: AppColors.textPrimary, fontSize: 12),
+            'Streaming token · llama.cpp (${ModelManager.currentModelName})',
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 12,
+            ),
           ),
         ],
       ),
@@ -1129,10 +1133,14 @@ class _MissingModelBanner extends StatelessWidget {
         children: [
           const PulseDot(color: AppColors.warning),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Model Qwen 3.5-0.8B belum tersedia. Chat berjalan mode demo.',
-              style: TextStyle(color: AppColors.textPrimary, fontSize: 12),
+              'Model ${ModelManager.currentModelName} belum tersedia. '
+              'Chat berjalan mode demo.',
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 12,
+              ),
             ),
           ),
           TextButton(

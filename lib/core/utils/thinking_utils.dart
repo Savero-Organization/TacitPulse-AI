@@ -159,6 +159,15 @@ const List<String> _kPartialSuffixes = [
   '</s',
 ];
 
+/// Token kontrol lengkap yang sering dipakai sebagai penutup/eOS.
+const List<String> _kTerminalControlTokens = [
+  '<|im_end|>',
+  '<|im_start|>',
+  '<|im_end_of_text|>',
+  '<|endoftext|>',
+  '<|startoftext|>',
+];
+
 /// Mencari akhiran token kontrol parsial yang menggantung di ujung `text`.
 String? _trailingPartialSuffix(String text) {
   for (final suffix in _kPartialSuffixes) {
@@ -205,13 +214,10 @@ String stripSpecialTokens(String input) {
     }
     cleaned = cleaned.substring(0, idx);
   }
-  // Potong ekor token kontrol ChatML parsial/utuh hingga ujung teks/stream.
-  // Tanpa dotAll — `.` tidak meng-swallow baris selanjutnya yang berisi jawaban.
-  cleaned = cleaned.replaceAll(
-    RegExp(r'\s*<\|(im(_end|_start|_of_text)?|endoftext)>?.*$',
-        multiLine: false),
-    '',
-  );
+  // Clean trailing placeholders exact (tanpa wildcard swallow).
+  for (final token in _kTerminalControlTokens) {
+    if (cleaned.endsWith(token)) cleaned = cleaned.substring(0, cleaned.length - token.length);
+  }
   return cleaned;
 }
 

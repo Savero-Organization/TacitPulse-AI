@@ -30,7 +30,7 @@ const List<CacheItem> cacheItems = [
   CacheItem('SOP PM-KOM-014', 'SOP', '1.2 MB', Icons.description_rounded),
   CacheItem('Log Anomali Line 2', 'LOG', '240 KB', Icons.text_snippet_rounded),
   CacheItem(
-    'qwen3.5-0.8b.q4_k_m.gguf',
+    'LFM2.5-350M-Q4_K_M.gguf',
     'MODEL',
     '620 MB',
     Icons.memory_rounded,

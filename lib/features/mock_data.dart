@@ -116,7 +116,7 @@ abstract final class MockData {
         modelCacheGb: 0.62,
         documents: 1284,
         voiceNotes: 96,
-        modelName: 'Qwen 3.5-0.8B Q4_K_M',
+        modelName: 'LFM2.5-350M-Q4_K_M',
         modelSizeMb: 620,
         modelLoaded: true,
       );

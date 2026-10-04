@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -104,7 +105,11 @@ class ChatCubit extends Cubit<ChatState> {
   Timer? _tokenTimer;
   StreamSubscription<String>? _llmSub;
   int _wordIndex = 0;
-  String _fullText = '';
+  /// Buffer mentah hasil stream native. Sengaja TIDAK di-strip per-piece:
+  /// memangkas token kontrol parsial (mis. `<|im_end`) di tengah stream akan
+  /// merusak rangkaian token. Sanitasi dilakukan secara stateless dari
+  /// seluruh buffer pada setiap tick.
+  final StringBuffer _rawBuffer = StringBuffer();
 
   // State tracking blok berpikir untuk guard anti-loop & budget token.
   bool _thinkOpen = false;
@@ -258,7 +263,7 @@ class ChatCubit extends Cubit<ChatState> {
     _thinkBuffer = '';
     _thinkWatch = null;
     _thinkingSeconds = 0;
-    _fullText = '';
+    _rawBuffer.clear();
     _llmSub?.cancel();
     final assistantId = state.messages.lastWhere((m) => m.isStreaming).id;
     final contextBody = buildChatContextBody(question, history);
@@ -276,15 +281,20 @@ class ChatCubit extends Cubit<ChatState> {
             // dan sebelum digabung ke teks. Tanpa trim — menghilangkan spasi
             // per-piece merusak penggabungan kalimat.
             final clean = stripSpecialTokens(piece);
+            debugPrint(
+              '[LLM Stream] Raw Piece: "${jsonEncode(piece)}" | '
+              'Cleaned: "${jsonEncode(clean)}"',
+            );
             final injected = clean.isEmpty ? null : _trackThinking(clean);
             // Simpan buffer mentah TANPA stripping — memangkas token parsial
             // secara menyilang piece akan merusak rangkaian token.
-            _fullText += piece;
-            if (injected != null) _fullText += injected;
-            // Full-buffer sanitization per tick: buang token ChatML dari
-            // keutuhan buffer, bukan hanya dari piece yang bertabrakan.
-            final sanitizedFull =
-                stripChatMlTokens(stripSpecialTokens(_fullText)).trimRight();
+            _rawBuffer.write(piece);
+            if (injected != null) _rawBuffer.write(injected);
+            // Sanitasi stateless dari SELURUH buffer tiap tick: token kontrol
+            // ChatML hanya dibuang utuh, teks yang sudah selesai tetap utuh.
+            final sanitizedFull = stripChatMlTokens(
+              stripSpecialTokens(_rawBuffer.toString()),
+            ).trimRight();
             final msgs = state.messages.map((m) {
               if (m.id != assistantId) return m;
               return m.copyWith(text: sanitizedFull);
@@ -393,6 +403,11 @@ class ChatCubit extends Cubit<ChatState> {
             text.trim().toLowerCase() == 'assistant' ||
             text.trim().toLowerCase() == 'system' ||
             text.trim().toLowerCase() == 'user') {
+          debugPrint(
+            '[LLM Stream] empty final text — raw buffer '
+            '(${_rawBuffer.length} chars): '
+            '"${jsonEncode(_rawBuffer.toString())}"',
+          );
           text =
               '⚠️ Model tidak menghasilkan jawaban. Pastikan file model GGUF '
               'valid dan telah dimuat dengan benar.';

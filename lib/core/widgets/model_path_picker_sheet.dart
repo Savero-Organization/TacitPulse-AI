@@ -4,7 +4,7 @@
 // Alur:
 //   1. User memilih file via OS File Picker (`file_picker`) atau memasukkan
 //      path manual.
-//   2. File divalidasi real-time (GGUF magic + keluarga/ukuran target Qwen)
+//   2. File divalidasi real-time (GGUF magic + keluarga/ukuran target LFM2.5)
 //      lewat [GgufValidator].
 //   3. Bila valid → Simpan custom path ke SharedPreferences
 //      (`ModelManager.setCustomModelPath`) lalu reload model.
@@ -469,7 +469,7 @@ class _ModelPathPickerSheetState extends State<ModelPathPickerSheet> {
             const SizedBox(height: 6),
             const Text(
               'Harus berupa ${GgufValidator.targetModelLabel} '
-              '(arsitektur qwen2/qwen3, ukuran 0.8B/0.5B).',
+              '(arsitektur lfm2, ukuran 350M/230M).',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),
             const SizedBox(height: 16),

@@ -162,10 +162,19 @@ tacit_model * model_load_internal(const char * model_path) {
 namespace {
 
 // Tokenizes prompt text.
+//
+// `parse_special=true` WAJIB untuk ChatML/LFM2: tanpa itu llama_tokenize()
+// memecah "<|im_start|>" menjadi karakter literal ('<','|','i','m',...) dan
+// control token tidak pernah sampai ke model sebagai id khusus.
+// `add_special=true` menyuntikkan BOS (id 1 = <|startoftext|> untuk LFM2)
+// di level token, bukan sebagai potongan teks.
+// Keamanan: bila BOS tidak disuntik otomatis (vocab tanpa flag add_bos),
+// kita prepended eksplisit lewat llama_token_bos().
 bool tokenize(const llama_vocab * vocab, const char * text, std::vector<llama_token> & out) {
     const int32_t len = static_cast<int32_t>(strlen(text));
+    const llama_token bos = llama_vocab_bos(vocab);
 
-    int32_t n = llama_tokenize(vocab, text, len, nullptr, 0, /*add_special=*/true, /*parse_special=*/false);
+    int32_t n = llama_tokenize(vocab, text, len, nullptr, 0, /*add_special=*/true, /*parse_special=*/true);
     if (n < 0) {
         n = -n; // requested buffer size
     }
@@ -173,12 +182,25 @@ bool tokenize(const llama_vocab * vocab, const char * text, std::vector<llama_to
         return false;
     }
 
-    out.resize(static_cast<size_t>(n));
-    const int32_t got = llama_tokenize(vocab, text, len, out.data(), n, true, false);
+    // +1 slot untuk BOS manual bila vocab tidak menyuntik sendiri.
+    out.assign(static_cast<size_t>(n) + 1, 0);
+    const int32_t got = llama_tokenize(vocab, text, len, out.data() + 1, n, /*add_special=*/true, /*parse_special=*/true);
     if (got < 0) {
+        out.clear();
         return false;
     }
-    out.resize(static_cast<size_t>(got));
+
+    const bool needs_manual_bos = bos >= 0 && (got == 0 || out[1] != bos);
+    if (needs_manual_bos) {
+        out[0] = bos;
+        out.resize(static_cast<size_t>(got) + 1);
+    } else {
+        out.erase(out.begin()); // buang slot kosong, token asli mulai di 0
+        out.resize(static_cast<size_t>(got));
+    }
+
+    LOGI("tokenize: chars=%d tokens=%zu bos=%d manual=%d first=%d",
+         len, out.size(), (int) bos, (int) needs_manual_bos, out.empty() ? -1 : (int) out[0]);
     return !out.empty();
 }
 
@@ -236,6 +258,8 @@ bool generate_int(tacit_model * h,
 
     // Process the whole prompt in one batch.
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), static_cast<int32_t>(prompt_tokens.size()));
+    LOGI("generate: prompt_tokens=%zu ctx_size=%d", prompt_tokens.size(),
+         llama_n_ctx(h->ctx));
     const int32_t batch_rc = llama_decode(h->ctx, batch);
     if (batch_rc != 0) {
         error = batch_rc == 1
@@ -256,6 +280,7 @@ bool generate_int(tacit_model * h,
 
         // Stop on end-of-sequence / end-of-turn tokens when the model defines them.
         if ((id == h->eos && h->eos >= 0) || (id == h->eot && h->eot >= 0)) {
+            LOGI("generate: stop_token=%d after %d generated", id, n_generated);
             break;
         }
         if (id < 0 || id >= llama_vocab_n_tokens(h->vocab)) {
@@ -264,6 +289,7 @@ bool generate_int(tacit_model * h,
 
         // Token id -> text piece.
         const std::string piece = token_to_piece(h->vocab, id);
+        LOGI("generate: tok[%d] id=%d piece='%s'", n_generated, id, piece.c_str());
 
         if (!piece.empty()) {
             if (!output.empty()) {
@@ -295,6 +321,8 @@ bool generate_int(tacit_model * h,
     }
 
     llama_sampler_free(sampler);
+    LOGI("generate: done generated=%d stopped=%d output_len=%zu", n_generated,
+         (int) stopped, output.size());
     return true;
 }
 

@@ -44,7 +44,7 @@ class _MeshScreenState extends State<MeshScreen> {
   late List<MeshTransfer> _transfers = const [
     MeshTransfer(name: 'SOP_Kompresor_Screw.pdf', detail: 'file chunks · P2P', progress: 0.62),
     MeshTransfer(name: 'Vector index (embedding)', detail: 'chunk sync · 1 peer', progress: 0.48),
-    MeshTransfer(name: 'qwen3.5-0.8b.q4_k_m.gguf', detail: 'partial model · seed', progress: 0.27),
+    MeshTransfer(name: 'LFM2.5-350M-Q4_K_M.gguf', detail: 'partial model · seed', progress: 0.27),
   ];
 
   @override
@@ -79,7 +79,7 @@ class _MeshScreenState extends State<MeshScreen> {
 
   bool _isModelFile(String name) {
     final n = name.toLowerCase();
-    return n.contains('qwen') && n.endsWith('.gguf');
+    return (n.contains('lfm') || n.contains('qwen')) && n.endsWith('.gguf');
   }
 
   /// Daftar transfer yang boleh ditampilkan. Node MUTI WAJIB hanya

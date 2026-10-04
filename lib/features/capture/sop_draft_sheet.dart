@@ -14,11 +14,19 @@ class SopDraftSheet extends StatelessWidget {
   final TacitNote note;
 
   static Future<void> show(BuildContext context, TacitNote note) {
+    // Route modal dibangun di context Navigator (di atas BlocProvider milik
+    // CaptureScreen), jadi cubit harus di-capture dari context pemanggil dan
+    // di-inject ulang — kalau tidak, BlocBuilder di sheet melempar
+    // ProviderNotFoundException ("Could not find the correct Provider<CaptureCubit>").
+    final cubit = context.read<CaptureCubit>();
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.deepCharcoal,
-      builder: (_) => SopDraftSheet(note: note),
+      builder: (_) => BlocProvider<CaptureCubit>.value(
+        value: cubit,
+        child: SopDraftSheet(note: note),
+      ),
     );
   }
 

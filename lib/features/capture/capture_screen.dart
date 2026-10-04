@@ -188,9 +188,11 @@ class _RecorderPanel extends StatelessWidget {
                 children: [
                   PulseDot(color: AppColors.success),
                   SizedBox(width: 6),
-                  Text(
-                    'whisper.cpp selesai transkripsi · Draft SOP siap dikonfirmasi.',
-                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  Expanded(
+                    child: Text(
+                      'whisper.cpp selesai transkripsi · Draft SOP siap dikonfirmasi.',
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    ),
                   ),
                 ],
               ),

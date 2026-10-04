@@ -266,6 +266,25 @@ class ChatCubit extends Cubit<ChatState> {
     }
   }
 
+  /// Mengembalikan state pesan dari cache lokal persisten. Jangan menunda
+  /// reset native KV cache — pesan yang dipulihkan adalah transcript
+  /// tampilan, bukan context engine aktif (prompt dibangun ulang dari
+  /// riwayat pada turn berikutnya).
+  Future<void> restoreMessages(List<ChatMessage> messages) async {
+    stopGenerating();
+    if (isClosed) return;
+    emit(
+      state.copyWith(
+        messages: List<ChatMessage>.unmodifiable(
+          messages.map(
+            (m) => m.copyWith(isStreaming: false, text: m.text),
+          ),
+        ),
+        status: ChatStatus.idle,
+      ),
+    );
+  }
+
   void startStreaming(String question) {
     if (state.status == ChatStatus.streaming ||
         state.status == ChatStatus.recording) {
@@ -311,16 +330,36 @@ class ChatCubit extends Cubit<ChatState> {
     }
   }
 
+  Set<String> _selectedDocsFilter = const <String>{};
+
+  /// Update filter dokumen yang dipakai sebagai sumber retrieval RAG.
+  /// Dipanggil dari UI setiap pilihan di sidebar KNOWLEDGE BASE berubah.
+  void setSelectedDocsFilter(Set<String> docNames) {
+    _selectedDocsFilter = Set<String>.of(docNames);
+  }
+
   /// Hasil retrieval RAG untuk satu pertanyaan: chunk yang relevan ->
   /// systemPrompt + contextDocs + citation yang diinjeksikan ke prompt.
   Future<_Decision> _retrieve(String question) async {
     final rag = _ragOverride ?? await _defaultRag();
+    // Koreksi typo umum yang sering muncul di input teknisi agar retrieval
+    // berbanding benar (mis. ENTRIFUGAL → CENTRIFUGAL).
+    final corrected = question.replaceAll(
+      RegExp(r'ENTRIFUGAL', caseSensitive: false),
+      'CENTRIFUGAL',
+    );
     List<RetrievedChunk> chunks = const [];
     try {
-      chunks = await rag.retrieve(question, topK: 4, minScore: 0.30);
+      chunks = await rag.retrieve(corrected, topK: 8, minScore: 0.25);
     } catch (_) {
       chunks = const [];
     }
+    if (_selectedDocsFilter.isNotEmpty) {
+      chunks = chunks
+          .where((c) => _selectedDocsFilter.contains(c.record.documentName))
+          .toList();
+    }
+    chunks = chunks.take(4).toList();
     final usesRag = chunks.isNotEmpty;
     return _Decision(
       systemPrompt: usesRag ? kOperationalSystemPrompt : kGeneralSystemPrompt,

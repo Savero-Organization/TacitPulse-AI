@@ -26,7 +26,6 @@ class MeshScreen extends StatefulWidget {
 }
 
 class _MeshScreenState extends State<MeshScreen> {
-  final math.Random _rnd = math.Random(11);
   final Map<String, bool> _sharedCaches = {};
 
   Timer? _timer;
@@ -39,11 +38,7 @@ class _MeshScreenState extends State<MeshScreen> {
   /// absolut yang bisa jatuh keluar layar atau melompat.
   Offset? _fabFraction;
 
-  late List<MeshTransfer> _transfers = const [
-    MeshTransfer(name: 'SOP_Kompresor_Screw.pdf', detail: 'file chunks · P2P', progress: 0.62),
-    MeshTransfer(name: 'Vector index (embedding)', detail: 'chunk sync · 1 peer', progress: 0.48),
-    MeshTransfer(name: 'LFM2.5-350M-Q4_K_M.gguf', detail: 'partial model · seed', progress: 0.27),
-  ];
+  late List<MeshTransfer> _transfers = const [];
 
   @override
   void initState() {
@@ -58,20 +53,12 @@ class _MeshScreenState extends State<MeshScreen> {
   }
 
   void _tick() {
+    // Tidak ada simulasi trafik fake: progress aktif hanya dari mesh real.
     if (!mounted) return;
     setState(() {
-      _upRate = 0.4 + _rnd.nextDouble() * 2.6;
-      _downRate = 0.3 + _rnd.nextDouble() * 2.0;
-      _transfers = [
-        for (final t in _transfers)
-          MeshTransfer(
-            name: t.name,
-            detail: t.detail,
-            progress: t.progress + 0.04 + _rnd.nextDouble() * 0.08 >= 1
-                ? 0.02 + _rnd.nextDouble() * 0.12
-                : t.progress + 0.04 + _rnd.nextDouble() * 0.08,
-          ),
-      ];
+      _upRate = 0;
+      _downRate = 0;
+      _transfers = const [];
     });
   }
 
@@ -118,12 +105,14 @@ class _MeshScreenState extends State<MeshScreen> {
                   ? constraints.maxHeight
                   : media.height,
             );
-            // Titik awal: ~76px dari kanan & ~140px dari bawah → fraksi
-            // terhadap area konten (resize → FAB mengikuti proporsional).
-            _fabFraction ??= Offset(
-              (contentSize.width - 76) / contentSize.width,
-              (contentSize.height - 140) / contentSize.height,
-            );
+            // Posisi default FAB memakai anchor tegas (right: 16, bottom: 16)
+            // via _fabFraction == null — aman dari ukuran transien/degenerate
+            // yang bisa bikin fraksi NaN lalu menempel di pojok kiri-atas.
+            // _fabFraction hanya diisi setelah user menggeser FAB pertama kali.
+            if (_fabFraction != null &&
+                (!_fabFraction!.dx.isFinite || !_fabFraction!.dy.isFinite)) {
+              _fabFraction = null;
+            }
 
             return Stack(
               children: [
@@ -188,39 +177,54 @@ class _MeshScreenState extends State<MeshScreen> {
     //   - FAB juga dinaikkan bila area menyempit (Math.max) agar clamp tidak
     //     terbalik (min > max).
     const fab = 56.0;
-    final rightMargin = 76.0;
+    final rightMargin = 16.0;
     final leftBound = math.max(12.0, size.width - fab - rightMargin);
-    final topBound = math.max(56.0, size.height - fab - 24.0);
-    // Fraksi → piksel saat ini: resize window / rotate → posisi mengikuti
-    // secara proporsional, tidak lompat ke koordinat absolut lama.
-    final f = _fabFraction ?? const Offset(0.8571, 0.82);
-    final left = (f.dx * size.width).clamp(12.0, leftBound);
-    final top = (f.dy * size.height).clamp(56.0, topBound);
-    return Positioned(
-      left: left,
-      top: top,
-      child: GestureDetector(
-        onPanUpdate: (details) {
-          setState(() {
-            // Simpan kembali sebagai fraksi (delta / ukuran area saat ini)
-            // dengan clamp di batas area — aman untuk ukuran apa pun,
-            // incl. resize yang menyempitkan area konten.
-            _fabFraction = Offset(
-              ((left + details.delta.dx) / size.width)
-                  .clamp(12.0 / size.width, leftBound / size.width),
-              ((top + details.delta.dy) / size.height)
-                  .clamp(56.0 / size.height, topBound / size.height),
-            );
-          });
-        },
-        child: FloatingActionButton(
-          onPressed: () => _openQrPair(context, state),
-          backgroundColor: AppColors.cyanAccent,
-          foregroundColor: AppColors.slateDark,
-          tooltip: 'QR Instant Pairing (Geser untuk memindahkan)',
-          child: const Icon(Icons.qr_code_scanner_rounded),
-        ),
+    final topBound = math.max(56.0, size.height - fab - 16.0);
+    // Posisi piksel FAB saat ini: default (belum pernah digeser) → patok ke
+    // pojok kanan-bawah; kalau sudah digeser → fraksi × ukuran dengan clamp.
+    final currentLeft = _fabFraction == null
+        ? leftBound
+        : (_fabFraction!.dx * size.width).clamp(12.0, leftBound);
+    final currentTop = _fabFraction == null
+        ? topBound
+        : (_fabFraction!.dy * size.height).clamp(56.0, topBound);
+
+    final fabChild = GestureDetector(
+      onPanUpdate: (details) {
+        setState(() {
+          final next = Offset(
+            ((currentLeft + details.delta.dx) / size.width)
+                .clamp(12.0 / size.width, leftBound / size.width),
+            ((currentTop + details.delta.dy) / size.height)
+                .clamp(56.0 / size.height, topBound / size.height),
+          );
+          _fabFraction = (next.dx.isFinite && next.dy.isFinite) ? next : null;
+        });
+      },
+      child: FloatingActionButton(
+        onPressed: () => _openQrPair(context, state),
+        backgroundColor: AppColors.cyanAccent,
+        foregroundColor: AppColors.slateDark,
+        tooltip: 'QR Instant Pairing (Geser untuk memindahkan)',
+        child: const Icon(Icons.qr_code_scanner_rounded),
       ),
+    );
+
+    // Default: anchor langsung ke tepi kanan/bawah area konten (right:16,
+    // bottom:16) supaya selalu di pojok kanan-bawah di semua platform.
+    // Setelah digeser: Positioned absolut hasil fraksi user.
+    if (_fabFraction == null) {
+      return Positioned(
+        right: rightMargin,
+        bottom: 16.0,
+        child: fabChild,
+      );
+    }
+
+    return Positioned(
+      left: currentLeft,
+      top: currentTop,
+      child: fabChild,
     );
   }
 

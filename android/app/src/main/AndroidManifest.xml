@@ -60,4 +60,7 @@
          sebagai notifikasi sistem (Android 13+). Aman dideklarasi lebih awal;
          saat ini progress memakai status bar in-app. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Allow app to write model GGUFs into public Downloads
+         (granted via Settings → Special app access on Android 11+). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 </manifest>

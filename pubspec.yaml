@@ -53,6 +53,7 @@ dependencies:
   google_mlkit_text_recognition: ^0.17.1
   xml: ^7.1.0
   archive: ^4.3.0
+  flutter_local_notifications: ^22.3.1
 
 dev_dependencies:
   flutter_test:

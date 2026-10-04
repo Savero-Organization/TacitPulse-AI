@@ -43,9 +43,21 @@ class ModelPaths {
     if (override != null) return override();
 
     if (Platform.isAndroid) {
-      // App-Scoped Private Storage (getFilesDir, tanpa izin storage publik)
-      // — diselesaikan oleh path_provider, bukan jalur publik Android.
-      return getApplicationSupportDirectory();
+      // Simpan di Download publik (/storage/.../Download/tacit_pulse_ai) agar
+      // terlihat oleh file manager. Membutuhkan MANAGE_EXTERNAL_STORAGE
+      // (diminta dari MainActivity). Fallback ke private saat direktori tidak
+      // bisa ditulis.
+      final publicRoot = Directory('/storage/emulated/0/Download/tacit_pulse_ai');
+      try {
+        if (!await publicRoot.exists()) {
+          await publicRoot.create(recursive: true);
+        }
+        await File(p.join(publicRoot.path, '.tacit_probe')).writeAsString('ok');
+        await File(p.join(publicRoot.path, '.tacit_probe')).delete();
+        return publicRoot;
+      } catch (_) {
+        return getApplicationSupportDirectory();
+      }
     }
     if (Platform.isIOS) {
       // Sandbox iOS: separuh Dokumen app.

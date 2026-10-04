@@ -21,6 +21,7 @@ import 'package:path/path.dart' as p;
 
 import '../utils/gguf_validator.dart';
 import '../utils/model_loader.dart';
+import '../../features/settings/model_settings_cubit.dart';
 import '../utils/thinking_utils.dart' show stripSpecialTokens;
 import 'tacit_llama_bindings.g.dart';
 
@@ -188,12 +189,19 @@ class LLMInference {
     if (_worker != null) return _ready;
 
     await ModelManager.refreshModelNameCache();
-    // Tanpa modelFile eksplisit: coba kandidat Tier 1 (Qwen 3.5 0.8B) dulu,
-    // lalu jatuh ke LFM2.5 default. Dengan modelFile eksplisit (pilihan user di
-    // picker), path itu yang dipakai apa adanya.
-    final path = modelFile != null
-        ? await ModelManager.resolveModelPath(modelFile)
-        : await ModelManager.resolveTier1ModelPath(defaultModelFile);
+    // Tanpa modelFile eksplisit: pakai model yang dipilih user (SharedPreferences
+    // via ModelSettingsCubit — fallback LFM2.5-350M hanya saat storage kosong),
+    // lalu bila file pilihan belum ada di device jatuh ke resolusi Tier 1
+    // (Qwen 3.5 0.8B, lalu LFM2.5) agar app tetap bisa boot. Dengan
+    // modelFile eksplisit (pilihan user di picker), path itu yang dipakai.
+    String? path;
+    if (modelFile != null) {
+      path = await ModelManager.resolveModelPath(modelFile);
+    } else {
+      final selected = await ModelSettingsCubit.getSelectedModel();
+      path = await ModelManager.resolveModelPath(selected.fileName);
+      path ??= await ModelManager.resolveTier1ModelPath(defaultModelFile);
+    }
     if (path == null) {
       _startupError =
           'Model (${modelFile ?? defaultModelFile}) belum tersedia di device. '

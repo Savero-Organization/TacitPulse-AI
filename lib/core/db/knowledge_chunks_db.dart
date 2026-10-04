@@ -144,8 +144,9 @@ class KnowledgeChunksDb {
       [chunk.id],
     );
     if (duplicate.isNotEmpty) {
-      throw StateError(
-        'ID chunk "${chunk.id}" sudah ada; hapus atau update dulu.',
+      _db.execute(
+        'DELETE FROM $kKnowledgeChunksTableName WHERE id = ?',
+        [chunk.id],
       );
     }
     _db.execute(

@@ -13,7 +13,11 @@ set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(LLAMA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp)
 
 # Enable Vulkan backend for llama.cpp / ggml
-set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+set(SPIRV-Headers_DIR /usr/share/cmake/SPIRV-Headers CACHE PATH "" FORCE)
+set(SPIRV-Tools_DIR /usr/lib64/cmake/SPIRV-Tools CACHE PATH "" FORCE)
+set(Vulkan_INCLUDE_DIR /usr/include CACHE PATH "" FORCE)
+set(Vulkan_GLSLC_EXECUTABLE /home/savero/Android/Sdk/ndk/28.2.13676358/shader-tools/linux-x86_64/glslc CACHE FILEPATH "" FORCE)
 
 # Include header llama.cpp & ggml versi terbaru
 include_directories(
@@ -55,8 +59,13 @@ ExternalProject_Add(whisper_ep
         -DWHISPER_BUILD_TESTS=OFF
         -DWHISPER_BUILD_EXAMPLES=OFF
         -DWHISPER_BUILD_SERVER=OFF
+        -DCMAKE_INSTALL_PREFIX=${WHISPER_EP_BINARY_DIR}/install
+    INSTALL_COMMAND ""
     BUILD_BYPRODUCTS
         ${WHISPER_EP_BINARY_DIR}/src/libwhisper.a
+        ${WHISPER_EP_BINARY_DIR}/ggml/src/libggml.a
+        ${WHISPER_EP_BINARY_DIR}/ggml/src/libggml-base.a
+        ${WHISPER_EP_BINARY_DIR}/ggml/src/libggml-cpu.a
 )
 
 add_library(tacit_whisper SHARED

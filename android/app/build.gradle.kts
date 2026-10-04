@@ -12,6 +12,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
@@ -31,6 +32,14 @@ android {
             // Device target saat ini ARM64. llama.cpp hanya di-build untuk
             // arm64-v8a (32-bit ARM terkendala intrinsik NEON FP16).
             abiFilters.addAll(listOf("arm64-v8a"))
+        }
+        externalNativeBuild {
+            cmake {
+                // libvulkan.so untuk API 24 tidak mengekspor simbol Vulkan 1.1+
+                // (vkGetPhysicalDeviceFeatures2 dsb.) yang dipakai ggml-vulkan,
+                // jadi kompilasi native diarahkan ke API 28.
+                arguments += listOf("-DANDROID_PLATFORM=android-28", "-DCMAKE_SYSTEM_VERSION=28")
+            }
         }
     }
 
@@ -58,4 +67,8 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

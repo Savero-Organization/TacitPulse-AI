@@ -25,6 +25,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../utils/model_loader.dart';
+import '../utils/model_registry.dart';
 import 'platform_download_support.dart';
 
 /// Fase siklus unduhan.
@@ -123,6 +124,12 @@ class ModelDownloadService extends ChangeNotifier {
   void _emit(DownloadProgress next) {
     _progress = next;
     notifyListeners();
+  }
+
+  /// Mulai unduhan untuk [model] dari registry (ModelInfo membawa URL +
+  /// fileName sekaligus — satu sumber kebenaran untuk UI & downloader).
+  Future<void> startDownloadModel(ModelInfo model, {http.Client? client}) {
+    return startDownload(url: model.downloadUrl, fileName: model.fileName, client: client);
   }
 
   /// Mulai (atau lanjutkan) unduhan. Aman dipanggil dari mana saja; bila
@@ -356,20 +363,10 @@ class ModelDownloadLifecycleObserver with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Hanya OS yang benar-benar menyuspend runtime yang perlu pause/resume
     // otomatis — di desktop minimize tetap aman untuk terus mengunduh.
-    final suspendPauses = service.platformSupport.autoPauseResumeOnSuspend;
-    if (!suspendPauses) return;
-
-    switch (state) {
-      case AppLifecycleState.paused:
-      case AppLifecycleState.hidden:
-        service.onAppBackgrounded();
-        break;
-      case AppLifecycleState.resumed:
-        service.onAppForegrounded();
-        break;
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.detached:
-        break;
-    }
+    // JANGAN auto-pause saat app masuk background: proses unduhan dipakai
+    // user dari notifikasi sistem dan diharapkan tetap berjalan selama app
+    // hidup. Android boleh membekukan proses sebentar saat Doze — resume
+    // dilakukan manual lewat tombol di status bar/notifikasi.
+    return;
   }
 }

@@ -52,13 +52,7 @@ class KnowledgeIngestService {
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(kKnowledgeSeededV1Key) == true) return 0;
 
-    final rootDir = await _ensureExtracted();
-    if (rootDir == null) return 0;
-
-    await ModelManager.ensureEmbeddingModel();
-    final ready = await ModelManager.ensureEmbeddingModelReady();
-    if (!ready) return 0;
-
+    // Aktifkan embedding hanya bila memang perlu (index benar-benar kosong).
     final db = await KnowledgeChunksDb.open();
     try {
       db.db.execute('''
@@ -67,12 +61,65 @@ class KnowledgeIngestService {
           source_path TEXT NOT NULL,
           media_type TEXT NOT NULL
         )''');
+      // Bila user data di vec0 DB sudah ada, JANGAN re-init dari asset zip;
+      // ini melindungi data user (dan menghindari ingest ulang tiap sync).
+      try {
+        final row = db.db.select('SELECT COUNT(*) AS c FROM knowledge_chunks').single;
+        final count = (row['c'] as num?)?.toInt() ?? 0;
+        if (count > 0) {
+          await prefs.setBool(kKnowledgeSeededV1Key, true);
+          return 0;
+        }
+      } catch (_) {
+        // Tabel mungkin belum ada di skenario awal — lanjutkan seeding.
+      }
+
+      final rootDir = await _ensureExtracted();
+      if (rootDir == null) return 0;
+
+      await ModelManager.ensureEmbeddingModel();
+      final ready = await ModelManager.ensureEmbeddingModelReady();
+      if (!ready) return 0;
+
       var inserted = 0;
       await for (final file in _walk(rootDir)) {
         inserted += await _ingestFile(db, file);
       }
       await prefs.setBool(kKnowledgeSeededV1Key, true);
       return inserted;
+    } finally {
+      db.close();
+    }
+  }
+
+  /// Ambil daftar dokumen yang sudah ter-ingest di knowledge store.
+  ///
+  /// Dipakai untuk memuat `KNOWLEDGE BASE` sidebar di Chat saat launch dan
+  /// untuk menyegarkan sidebar pasca-import, tanpa bergantung pada state
+  /// in-memory.
+  Future<List<({String title, String sourcePath, String mediaType})>>
+      listStoredDocuments() async {
+    final db = await KnowledgeChunksDb.open();
+    try {
+      db.db.execute('''
+        CREATE TABLE IF NOT EXISTS $kDocumentSourcesTable (
+          title TEXT PRIMARY KEY,
+          source_path TEXT NOT NULL,
+          media_type TEXT NOT NULL
+        )''');
+      final rows = db.db.select(
+        'SELECT title, source_path, media_type FROM $kDocumentSourcesTable '
+        'ORDER BY rowid DESC',
+      );
+      return rows
+          .map(
+            (row) => (
+              title: row['title'] as String,
+              sourcePath: row['source_path'] as String,
+              mediaType: row['media_type'] as String,
+            ),
+          )
+          .toList();
     } finally {
       db.close();
     }

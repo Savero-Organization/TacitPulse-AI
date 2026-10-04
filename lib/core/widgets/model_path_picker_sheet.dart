@@ -9,7 +9,10 @@
 //   3. Bila valid → Simpan custom path ke SharedPreferences
 //      (`ModelManager.setCustomModelPath`) lalu reload model.
 
+import 'dart:convert';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 
@@ -17,6 +20,10 @@ import '../downloads/model_download_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/gguf_validator.dart';
 import '../utils/model_loader.dart';
+import '../utils/model_registry.dart' hide ModelFamily;
+import '../utils/model_registry.dart' as registry;
+
+import '../../features/settings/model_settings_cubit.dart';
 
 /// Modal bottom sheet untuk pemilihan model on-device.
 class ModelPathPickerSheet extends StatefulWidget {
@@ -411,6 +418,138 @@ class _ModelPathPickerSheetState extends State<ModelPathPickerSheet> {
     );
   }
 
+  /// Daftar model registry yang dikelompokkan per keluarga (Liquid AI (LFM)
+  /// & Qwen). Setiap baris: nama + ukuran target + status aktif + tombol
+  /// unduh per-model (memakai [ModelInfo] yang sama untuk UI & downloader).
+  Widget _buildRegistryPicker() {
+    final activeId = ModelSettingsCubit.instance.state.id;
+    final activeFile = ModelManager.activeModelFileName;
+    Widget section(String title, List<ModelInfo> models) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: AppColors.cyanAccent,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            for (final m in models)
+              Builder(builder: (_) {
+                final isActive = activeFile != null &&
+                    (activeFile == m.fileName ||
+                        activeFile.endsWith(m.fileName));
+                return Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.slateDark,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: m.id == activeId
+                        ? AppColors.industrialAmber
+                        : AppColors.surfaceBorder,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Radio<String>(
+                      value: m.id,
+                      activeColor: AppColors.industrialAmber,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            m.name,
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            '${m.sizeInMb.toStringAsFixed(0)} MB'
+                            '${isActive ? ' · aktif' : ''}'
+                            '${m.id == activeId ? ' · terpilih' : ''}',
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Unduh ${m.name}',
+                      onPressed: () =>
+                          _service.startDownloadModel(m),
+                      icon: const Icon(
+                        Icons.download_rounded,
+                        color: AppColors.cyanAccent,
+                        size: 18,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+                );
+              }),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.slateDark,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.surfaceBorder),
+      ),
+      child: RadioGroup<String>(
+        groupValue: activeId,
+        onChanged: (v) async {
+          final model = ModelRegistry.allModels.firstWhere(
+            (m) => m.id == v,
+            orElse: () => ModelRegistry.defaultModel,
+          );
+          await ModelSettingsCubit.instance.selectModel(model);
+          if (mounted) setState(() {});
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Model Tersedia (pilih & unduh):',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            section(
+              'Liquid AI (LFM)',
+              ModelRegistry.modelsFor(registry.ModelFamily.lfm),
+            ),
+            section(
+              'Qwen',
+              ModelRegistry.modelsFor(registry.ModelFamily.qwen),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _setWebTier(bool value) async {
     setState(() => _webTierEnabled = value);
     await ModelManager.setWebTranslationEnabled(value);
@@ -559,7 +698,11 @@ class _ModelPathPickerSheetState extends State<ModelPathPickerSheet> {
             ],
             _ValidationFeedback(state: _state, result: _result),
             const SizedBox(height: 12),
+            _buildRegistryPicker(),
+            const SizedBox(height: 12),
             _buildDownloadSection(),
+            const SizedBox(height: 12),
+            const _HfSearchSection(),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -773,6 +916,239 @@ class _WebTierToggle extends StatelessWidget {
               activeThumbColor: AppColors.industrialAmber,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pencarian model GGUF langsung dari HuggingFace Hub.
+///
+/// Query memakai endpoint publik `https://huggingface.co/api/models` (filter
+/// tag `gguf`). Setiap repo diperluas ke daftar file `.gguf`-nya lewat
+/// `/api/models/<repo>`, dan setiap file punya tombol unduh langsung
+/// (`https://huggingface.co/<repo>/resolve/main/<file>?download=true`) ke
+/// [ModelDownloadService] global.
+class _HfSearchSection extends StatefulWidget {
+  const _HfSearchSection();
+
+  @override
+  State<_HfSearchSection> createState() => _HfSearchSectionState();
+}
+
+class _HfModel {
+  _HfModel({required this.id, required this.downloads});
+  final String id;
+  final int downloads;
+  List<String> ggufFiles = const [];
+  bool filesLoaded = false;
+  bool expanded = false;
+}
+
+class _HfSearchSectionState extends State<_HfSearchSection> {
+  final _controller = TextEditingController(text: 'LFM gguf');
+  bool _loading = false;
+  String? _error;
+  List<_HfModel> _results = const [];
+
+  Future<void> _search() async {
+    final q = _controller.text.trim();
+    if (q.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final uri = Uri.parse(
+          'https://huggingface.co/api/models?search=${Uri.encodeQueryComponent(q)}&filter=gguf&sort=downloads&limit=12');
+      final resp = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (resp.statusCode != 200) {
+        setState(() => _error = 'HTTP ${resp.statusCode}');
+        return;
+      }
+      final list = jsonDecode(resp.body) as List;
+      _results = list
+          .whereType<Map>()
+          .map((m) => _HfModel(
+                id: m['id']?.toString() ?? '',
+                downloads: (m['downloads'] as num?)?.toInt() ?? 0,
+              ))
+          .where((m) => m.id.isNotEmpty)
+          .toList();
+      setState(() {});
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadFiles(_HfModel m) async {
+    try {
+      final resp = await http
+          .get(Uri.parse('https://huggingface.co/api/models/${m.id}'))
+          .timeout(const Duration(seconds: 15));
+      final data = jsonDecode(resp.body) as Map;
+      final siblings = (data['siblings'] as List?) ?? const [];
+      m.ggufFiles = siblings
+          .whereType<Map>()
+          .map((s) => s['rfilename']?.toString() ?? '')
+          .where((f) => f.toLowerCase().endsWith('.gguf'))
+          .toList();
+      m.filesLoaded = true;
+      if (mounted) setState(() {});
+    } catch (_) {
+      m.filesLoaded = true;
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.slateDark,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.surfaceBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Cari model di HuggingFace (GGUF):',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 12.5),
+                  decoration: InputDecoration(
+                    hintText: 'mis. "Qwen gguf" atau "LFM2 gguf"',
+                    hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 11.5),
+                    isDense: true,
+                    filled: true,
+                    fillColor: AppColors.deepCharcoal,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onSubmitted: (_) => _search(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Cari',
+                onPressed: _loading ? null : _search,
+                icon: const Icon(Icons.search_rounded, color: AppColors.cyanAccent),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            children: ['Qwen gguf', 'LFM2 gguf', 'LFM gguf']
+                .map((q) => ActionChip(
+                      label: Text(q, style: const TextStyle(fontSize: 10.5, color: AppColors.textSecondary)),
+                      backgroundColor: AppColors.deepCharcoal,
+                      onPressed: () {
+                        _controller.text = q;
+                        _search();
+                      },
+                    ))
+                .toList(),
+          ),
+          if (_loading) ...[
+            const SizedBox(height: 8),
+            const Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.cyanAccent),
+              ),
+            ),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: AppColors.danger, fontSize: 11.5)),
+          ],
+          for (final m in _results)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  InkWell(
+                    onTap: () async {
+                      setState(() => m.expanded = !m.expanded);
+                      if (m.expanded && !m.filesLoaded) await _loadFiles(m);
+                    },
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            m.id,
+                            style: const TextStyle(color: AppColors.textPrimary, fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text('${m.downloads} dl',
+                            style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
+                        Icon(m.expanded ? Icons.expand_less : Icons.expand_more,
+                            color: AppColors.textMuted, size: 16),
+                      ],
+                    ),
+                  ),
+                  if (m.expanded) ...[
+                    if (!m.filesLoaded)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 18, top: 4),
+                        child: Text('Memuat daftar file…',
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 10.5)),
+                      )
+                    else if (m.ggufFiles.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 18, top: 4),
+                        child: Text('Tidak ada file .gguf.',
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 10.5)),
+                      )
+                    else
+                      for (final f in m.ggufFiles)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 18, top: 2),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(f,
+                                    style: const TextStyle(
+                                        color: AppColors.textSecondary, fontSize: 11),
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                              IconButton(
+                                tooltip: 'Unduh',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => ModelDownloadService.instance.startDownload(
+                                  url:
+                                      'https://huggingface.co/${m.id}/resolve/main/$f?download=true',
+                                  fileName: f.split('/').last,
+                                ),
+                                icon: const Icon(Icons.download_rounded,
+                                    color: AppColors.cyanAccent, size: 16),
+                              ),
+                            ],
+                          ),
+                        ),
+                  ],
+                ],
+              ),
+            ),
         ],
       ),
     );

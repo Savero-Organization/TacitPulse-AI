@@ -77,12 +77,19 @@ tacit_model * model_load_internal(const char * model_path) {
         preferred_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU);
         dev_label = "iGPU";
     }
+    // Android target (MediaTek/Adreno) Vulkan-nya tidak stabil di ggml —
+    // SIGSEGV saat alokasi buffer, matikan GPU offload di sana.
+    // Desktop (Linux/Windows/macOS) boleh pakai iGPU/diGPU seperti biasa.
+#ifdef __ANDROID__
+    bool gpu_offload = false;
+#else
     bool gpu_offload = preferred_dev != nullptr;
+#endif
 
     llama_model_params mparams = llama_model_default_params();
     // `devices` array dipakai bila set agar prioritas deterministic.
     ggml_backend_dev_t * selected_devices = nullptr;
-    if (preferred_dev != nullptr) {
+    if (gpu_offload && preferred_dev != nullptr) {
         selected_devices = new (std::nothrow) ggml_backend_dev_t[2]{
             preferred_dev, nullptr};
         mparams.devices = selected_devices;
@@ -256,16 +263,22 @@ bool generate_int(tacit_model * h,
         return false;
     }
 
-    // Process the whole prompt in one batch.
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), static_cast<int32_t>(prompt_tokens.size()));
     LOGI("generate: prompt_tokens=%zu ctx_size=%d", prompt_tokens.size(),
          llama_n_ctx(h->ctx));
-    const int32_t batch_rc = llama_decode(h->ctx, batch);
-    if (batch_rc != 0) {
-        error = batch_rc == 1
-                    ? "llama_decode: KV cache full (increase context size)"
-                    : "llama_decode(prompt) failed";
-        return false;
+    // Prompt bisa lebih panjang dari cparams.n_batch — potong jadi beberapa
+    // llama_decode (chunk) supaya GGML_ASSERT(n_tokens_all <= cparams.n_batch)
+    // tidak gagal (cparams.n_batch default 2048).
+    const int32_t n_batch_ctx = llama_n_batch(h->ctx);
+    for (int32_t off = 0; off < static_cast<int32_t>(prompt_tokens.size()); off += n_batch_ctx) {
+        const int32_t chunk = std::min<int32_t>(n_batch_ctx, static_cast<int32_t>(prompt_tokens.size()) - off);
+        llama_batch batch = llama_batch_get_one(prompt_tokens.data() + off, chunk);
+        const int32_t batch_rc = llama_decode(h->ctx, batch);
+        if (batch_rc != 0) {
+            error = batch_rc == 1
+                        ? "llama_decode: KV cache full (increase context size)"
+                        : "llama_decode(prompt) failed";
+            return false;
+        }
     }
 
     llama_sampler * sampler = build_sampler(temperature);

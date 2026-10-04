@@ -3,13 +3,25 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/downloads/download_notification_service.dart';
 import 'core/downloads/model_download_service.dart';
 import 'core/rag/knowledge_ingest_service.dart';
+import 'core/utils/model_loader.dart';
 import 'core/theme/app_colors.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/login_screen.dart';
+import 'features/settings/model_settings_cubit.dart';
 import 'features/auth/onboarding_screen.dart';
 import 'features/shell/app_shell.dart';
+
+Future<void> _initDownloadNotifications() async {
+  try {
+    await DownloadNotificationService.instance.init();
+    DownloadNotificationService.instance.attach();
+  } catch (_) {
+    // Platform tanpa dukungan notifikasi lokal → unduhan tetap jalan in-app.
+  }
+}
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,8 +32,21 @@ void main() {
   );
   WidgetsBinding.instance.addObserver(lifecycle);
   ModelDownloadService.instance.restorePending();
+  // Muat pilihan model tersimpan ke state sebelum model dimuat.
+  unawaited(ModelSettingsCubit.instance.load());
+  // Notifikasi sistem untuk progres unduhan model (menggantikan banner in-app).
+  unawaited(_initDownloadNotifications());
   // Seed index vektor dokumen Case 1 sekali (background) — tidak memblokir UI.
   unawaited(KnowledgeIngestService().ensureSeeded());
+  // Saat unduhan model embedding beres (di mana pun user berada), isi ulang
+  // indeks dokumen supaya citations bisa pakai embedding baru.
+  ModelDownloadService.instance.addListener(() {
+    final p = ModelDownloadService.instance.progress;
+    if (p.phase == DownloadPhase.completed &&
+        p.fileName == ModelManager.embeddingModelName) {
+      unawaited(KnowledgeIngestService().ensureSeeded());
+    }
+  });
   runApp(const TacitPulseApp());
 }
 

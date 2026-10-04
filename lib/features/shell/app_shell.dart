@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../core/widgets/model_download_status_bar.dart';
 import '../../core/widgets/responsive_shell.dart';
 import '../capture/capture_screen.dart';
 import '../chat/chat_screen.dart';
@@ -48,20 +47,13 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (ctx) => MeshMonitorCubit()..start(),
-      // Status bar unduhan global di atas shell: tetap hidup di semua tab
-      // sementara user mengerjakan hal lain saat model diunduh di background.
-      child: Column(
-        children: [
-          const ModelDownloadStatusBar(),
-          Expanded(
-            child: ResponsiveShell(
-              pages: _pages,
-              initialIndex: _index,
-              destinations: _destinations,
-              onDestinationSelected: (i) => setState(() => _index = i),
-            ),
-          ),
-        ],
+      // Progres unduhan kini lewat notifikasi sistem (DownloadNotificationService),
+      // bukan banner status di atas shell.
+      child: ResponsiveShell(
+        pages: _pages,
+        initialIndex: _index,
+        destinations: _destinations,
+        onDestinationSelected: (i) => setState(() => _index = i),
       ),
     );
   }

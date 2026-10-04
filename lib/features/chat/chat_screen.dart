@@ -1,18 +1,25 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/downloads/model_download_service.dart';
 import '../../core/rag/knowledge_ingest_service.dart';
 import '../../core/models/citation.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/model_loader.dart';
+import '../settings/model_settings_cubit.dart';
+import '../../core/utils/model_registry.dart';
 import '../../core/widgets/model_path_picker_sheet.dart';
 import '../../core/widgets/profile_app_bar_action.dart';
 import '../../core/widgets/responsive_shell.dart';
 import '../../core/widgets/widgets.dart';
 import 'cubit/chat_cubit.dart';
+import '../../core/models/chat_message.dart';
 import 'widgets/citation_pdf_path.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/pdf_viewer_screen.dart';
@@ -41,6 +48,9 @@ class _ChatViewState extends State<_ChatView> {
   // State Riwayat Chat (diisi dari percakapan nyata, tidak ada placeholder).
   final List<String> _chatSessions = [];
   int _activeSessionIndex = 0;
+  // Pesan per indeks sesi; dipersist di SharedPreferences.
+  Map<int, List<ChatMessage>> _sessionMessages = {};
+  StreamSubscription<ChatState>? _chatSub;
 
   // State List Berkas SOP / Knowledge Base
   late List<_SourceDoc> _sourceDocsList;
@@ -60,8 +70,17 @@ class _ChatViewState extends State<_ChatView> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.read<ChatCubit>().init();
+      final chat = context.read<ChatCubit>();
+      chat.init();
       _maybePromptEssentials();
+      _loadKnowledgeBaseFromDb();
+
+      _chatSub = chat.stream.listen((state) {
+        if (state.status != ChatStatus.idle) return;
+        _sessionMessages[_activeSessionIndex] = state.messages;
+        _persistChatSessions();
+      });
+      _restoreChatSessions();
     });
 
     // Unduhan model latar belakang selesai (di tab mana pun) → reload LLM
@@ -107,6 +126,7 @@ class _ChatViewState extends State<_ChatView> {
   @override
   void dispose() {
     ModelDownloadService.instance.removeListener(_onDownloadServiceChanged);
+    _chatSub?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -114,9 +134,39 @@ class _ChatViewState extends State<_ChatView> {
   void _onDownloadServiceChanged() {
     final p = ModelDownloadService.instance.progress;
     if (p.phase != DownloadPhase.completed || p.resultPath == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<ChatCubit>().reloadModel();
-    });
+    final fileName = p.fileName ?? '';
+    if (fileName == ModelManager.embeddingModelName) {
+      // Embedding model → JANGAN reload LLM chat; indeks dokumen cukup
+      // di-refresh (lihat listener di main.dart).
+      ModelDownloadService.instance.dismiss();
+      return;
+    }
+    // Hanya reload bila model terunduh berbeda dari yang sedang aktif —
+    // mematikan/membunuh worker chat saat generate berlangsung membuat
+    // jawaban kosong ("Model tidak menghasilkan jawaban").
+    final active = ModelManager.activeModelFileName ?? '';
+    if (fileName.isNotEmpty &&
+        (active.isEmpty || (active != fileName && !active.endsWith(fileName)))) {
+      ModelDownloadService.instance.dismiss();
+      // Set model terpilih sesuai file yang baru diunduh agar app langsung
+      // memuat GGUF itu saat reload (bukan fallback tier lama).
+      final match = ModelRegistry.allModels.where(
+        (m) => m.fileName == fileName,
+      );
+      if (match.isNotEmpty) {
+        unawaited(
+          ModelSettingsCubit.instance.selectModel(match.first).then((_) {
+            if (mounted) context.read<ChatCubit>().reloadModel();
+          }),
+        );
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) context.read<ChatCubit>().reloadModel();
+        });
+      }
+    } else {
+      ModelDownloadService.instance.dismiss();
+    }
   }
 
   /// Buka PdfViewerScreen untuk citation: resolve path PDF via store
@@ -163,26 +213,191 @@ class _ChatViewState extends State<_ChatView> {
   }
 
   void _addNewSession() {
-    context.read<ChatCubit>().clearChat();
+    final current = context.read<ChatCubit>().state.messages;
+    if (_chatSessions.isNotEmpty) {
+      _sessionMessages[_activeSessionIndex] = current;
+    }
+    final remapped = <int, List<ChatMessage>>{};
+    for (final entry in _sessionMessages.entries) {
+      remapped[entry.key + 1] = entry.value;
+    }
+    remapped[0] = const [];
+    _sessionMessages = remapped;
     setState(() {
       _chatSessions.insert(0, 'Obrolan Baru ${_chatSessions.length + 1}');
       _activeSessionIndex = 0;
     });
+    context.read<ChatCubit>().clearChat();
+  }
+
+  void _selectSession(int index) {
+    if (index < 0 || index >= _chatSessions.length || index == _activeSessionIndex) {
+      return;
+    }
+    _sessionMessages[_activeSessionIndex] =
+        context.read<ChatCubit>().state.messages;
+    setState(() => _activeSessionIndex = index);
+    context.read<ChatCubit>().restoreMessages(
+      _sessionMessages[index] ?? const [],
+    );
   }
 
   void _deleteSession(int index) {
     if (index < 0 || index >= _chatSessions.length) return;
+    final deletingActive = index == _activeSessionIndex;
+    final remapped = <int, List<ChatMessage>>{};
+    for (final entry in _sessionMessages.entries) {
+      if (entry.key == index) continue;
+      remapped[entry.key > index ? entry.key - 1 : entry.key] = entry.value;
+    }
     setState(() {
       _chatSessions.removeAt(index);
+      _sessionMessages = remapped;
       if (_chatSessions.isEmpty) {
         _chatSessions.add('Obrolan Baru');
         _activeSessionIndex = 0;
+        _sessionMessages = {0: const []};
         context.read<ChatCubit>().clearChat();
+      } else if (index < _activeSessionIndex) {
+        _activeSessionIndex -= 1;
       } else if (_activeSessionIndex >= _chatSessions.length) {
         _activeSessionIndex = _chatSessions.length - 1;
       }
     });
+    if (deletingActive || !deletingActive) {
+      context.read<ChatCubit>().restoreMessages(
+        _sessionMessages[_activeSessionIndex] ?? const [],
+      );
+    }
   }
+
+  Future<void> _restoreChatSessions() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('tacit_chat_sessions_v1');
+      if (raw == null || raw.isEmpty) return;
+      final root = jsonDecode(raw) as Map<String, dynamic>;
+      final sessions = (root['sessions'] as List?) ?? const [];
+      final activeIndex = (root['activeIndex'] as num?)?.toInt() ?? 0;
+      final titles = <String>[];
+      final messages = <int, List<ChatMessage>>{};
+      for (var i = 0; i < sessions.length; i++) {
+        final session = sessions[i] as Map<String, dynamic>;
+        titles.add(session['title'] as String? ?? 'Obrolan Baru');
+        messages[i] = ((session['messages'] as List?) ?? const [])
+            .map((m) => _chatMessageFromJson(m as Map<String, dynamic>))
+            .toList();
+      }
+      if (titles.isEmpty) return;
+      if (!mounted) return;
+      setState(() {
+        _chatSessions
+          ..clear()
+          ..addAll(titles);
+        _sessionMessages = messages;
+        _activeSessionIndex = activeIndex.clamp(0, titles.length - 1);
+      });
+      context.read<ChatCubit>().restoreMessages(
+        _sessionMessages[_activeSessionIndex] ?? const [],
+      );
+    } catch (_) {
+      // Abaikan JSON rusak — mulai clean tanpa crash.
+    }
+  }
+
+  Future<void> _persistChatSessions() async {
+    if (_chatSessions.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final sessions = <Map<String, dynamic>>[];
+      for (var i = 0; i < _chatSessions.length; i++) {
+        sessions.add({
+          'title': _chatSessions[i],
+          'messages': (_sessionMessages[i] ?? const [])
+              .map(_chatMessageToJson)
+              .toList(),
+        });
+      }
+      await prefs.setString(
+        'tacit_chat_sessions_v1',
+        jsonEncode({'activeIndex': _activeSessionIndex, 'sessions': sessions}),
+      );
+    } catch (_) {
+      // Best effort — storage tidak boleh menahan UI.
+    }
+  }
+
+  Map<String, dynamic> _chatMessageToJson(ChatMessage m) => {
+        'id': m.id,
+        'role': m.role == ChatRole.user ? 'user' : 'assistant',
+        'text': m.text,
+        'timestamp': m.timestamp.toIso8601String(),
+        'isVoice': m.isVoice,
+        'draftSopId': m.draftSopId,
+        'thinkingSeconds': m.thinkingSeconds,
+        'citations': m.citations.map(_citationToJson).toList(),
+      };
+
+  ChatMessage _chatMessageFromJson(Map<String, dynamic> json) => ChatMessage(
+        id: json['id'] as String? ?? 'm-${DateTime.now().microsecondsSinceEpoch}',
+        role: (json['role'] as String?) == 'assistant'
+            ? ChatRole.assistant
+            : ChatRole.user,
+        text: json['text'] as String? ?? '',
+        timestamp: DateTime.tryParse(json['timestamp'] as String? ?? '') ??
+            DateTime.now(),
+        isVoice: json['isVoice'] as bool? ?? false,
+        draftSopId: json['draftSopId'] as String?,
+        thinkingSeconds: (json['thinkingSeconds'] as num?)?.toInt() ?? 0,
+        citations: ((json['citations'] as List?) ?? const [])
+            .map((c) => _citationFromJson(c as Map<String, dynamic>))
+            .toList(),
+      );
+
+  Map<String, dynamic> _citationToJson(SourceCitation c) => {
+        'id': c.id,
+        'title': c.title,
+        'type': c.type.badge,
+        'page': c.page,
+        'snippet': c.snippet,
+        'score': c.score,
+        'bbox': [
+          c.boundingBox.left,
+          c.boundingBox.top,
+          c.boundingBox.width,
+          c.boundingBox.height,
+        ],
+      };
+
+  SourceCitation _citationFromJson(Map<String, dynamic> json) => SourceCitation(
+        id: json['id'] as String? ?? '',
+        title: json['title'] as String? ?? '',
+        type: _citationTypeFromBadge(json['type'] as String? ?? 'PDF'),
+        page: (json['page'] as num?)?.toInt() ?? 1,
+        snippet: json['snippet'] as String? ?? '',
+        score: (json['score'] as num?)?.toDouble() ?? 0.0,
+        boundingBox: _rectFromJson(json['bbox']),
+      );
+
+  CitationType _citationTypeFromBadge(String badge) {
+    for (final type in CitationType.values) {
+      if (type.badge == badge || type.label == badge) return type;
+    }
+    return CitationType.pdf;
+  }
+
+  Rect _rectFromJson(Object? bbox) {
+    if (bbox is List && bbox.length >= 4) {
+      return Rect.fromLTWH(
+        (bbox[0] as num).toDouble(),
+        (bbox[1] as num).toDouble(),
+        (bbox[2] as num).toDouble(),
+        (bbox[3] as num).toDouble(),
+      );
+    }
+    return const Rect.fromLTWH(0.08, 0.32, 0.6, 0.2);
+  }
+
 
   /// Impor PDF → ekstraksi teks + bbox per halaman → chunk 250-500 token →
   /// embedding lokal (GABUT-22) → SQLite vector store. Progres & error
@@ -193,66 +408,91 @@ class _ChatViewState extends State<_ChatView> {
     try {
       final messenger = ScaffoldMessenger.of(context);
       final picked = await FilePicker.pickFiles(
-        dialogTitle: 'Pilih PDF',
+        dialogTitle: 'Pilih dokumen',
         type: FileType.custom,
-        allowedExtensions: const ['pdf'],
+        allowedExtensions: const [
+          'pdf',
+          'docx',
+          'pptx',
+          'xlsx',
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'bmp',
+        ],
+        // pickFiles memungkinkan multi-select secara default di v13
       );
-      final path = picked.isEmpty ? null : picked.first.path;
-      if (path == null || !mounted) return;
+      final paths = picked
+          .map((f) => f.path)
+          .whereType<String>()
+          .toList();
+      if (paths.isEmpty || !mounted) return;
 
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              'Parsing ${p.basename(path)} → chunking → embedding lokal…',
+      var totalChunks = 0;
+      for (final path in paths) {
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                'Parsing ${p.basename(path)} → chunking → embedding lokal…',
+              ),
+              // Durasi maksimal; ditutup eksplisit di akhir tiap file.
+              duration: const Duration(days: 365),
             ),
-            // Durasi maksimal; ditutup eksplisit di finally bawah.
-            duration: const Duration(days: 365),
-          ),
-        );
+          );
 
-      var progressActive = true;
-      try {
-        final chunkCount = await KnowledgeIngestService().ingestPath(path);
-        if (!mounted) return;
+        var progressActive = true;
+        try {
+          final chunkCount = await KnowledgeIngestService().ingestPath(path);
+          if (!mounted) return;
+          totalChunks += chunkCount;
 
-        if (chunkCount > 0) {
-          final fileName = p.basename(path);
-          setState(() {
-            if (!_sourceDocsList.any((doc) => doc.name == fileName)) {
-              _sourceDocsList.insert(0, _SourceDoc(fileName, 'PDF'));
-            }
-            _selectedDocs.add(fileName);
-          });
+          if (chunkCount > 0) {
+            // Segarkan sidebar dari DB agar upload langsung muncul tanpa restart.
+            await _loadKnowledgeBaseFromDb();
+          }
+
+          messenger.hideCurrentSnackBar();
+          progressActive = false;
+          messenger.showSnackBar(
+            SnackBar(
+              backgroundColor:
+                  chunkCount == 0 ? AppColors.danger : AppColors.success,
+              content: Text(
+                chunkCount == 0
+                    ? '${p.basename(path)}: tidak ada teks terekstrak.'
+                    : '${p.basename(path)}: $chunkCount chunk tersimpan.',
+              ),
+            ),
+          );
+        } catch (error) {
+          messenger.hideCurrentSnackBar();
+          progressActive = false;
+          if (!mounted) return;
+          messenger.showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.danger,
+              content: Text('Gagal import ${p.basename(path)}: $error'),
+            ),
+          );
+        } finally {
+          // Pastikan snackbar progres tidak tertinggal saat widget sudah
+          // tidak mounted atau ada exception tak terduga.
+          if (progressActive) messenger.hideCurrentSnackBar();
         }
+      }
 
-        messenger.hideCurrentSnackBar();
-        progressActive = false;
+      if (mounted && paths.length > 1) {
         messenger.showSnackBar(
           SnackBar(
             backgroundColor: AppColors.success,
             content: Text(
-              chunkCount == 0
-                  ? 'PDF tanpa lapisan teks (scan?) — tidak ada chunk tersimpan.'
-                  : '$chunkCount chunk tersimpan di SQLite Vector Store.',
+              'Impor selesai: ${paths.length} file, $totalChunks chunk tersimpan.',
             ),
           ),
         );
-      } catch (error) {
-        messenger.hideCurrentSnackBar();
-        progressActive = false;
-        if (!mounted) return;
-        messenger.showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.danger,
-            content: Text('Gagal import PDF: $error'),
-          ),
-        );
-      } finally {
-        // Pastikan snackbar progres tidak tertinggal saat widget sudah
-        // tidak mounted atau ada exception tak terduga.
-        if (progressActive) messenger.hideCurrentSnackBar();
       }
     } finally {
       _isImporting = false;
@@ -358,18 +598,21 @@ class _ChatViewState extends State<_ChatView> {
         _selectedDocs.remove(doc.name);
       }
     });
+    context.read<ChatCubit>().setSelectedDocsFilter(_selectedDocs);
   }
 
   void _selectAllDocs() {
     setState(() {
       _selectedDocs = {for (final d in _sourceDocsList) d.name};
     });
+    context.read<ChatCubit>().setSelectedDocsFilter(_selectedDocs);
   }
 
   void _deselectAllDocs() {
     setState(() {
       _selectedDocs.clear();
     });
+    context.read<ChatCubit>().setSelectedDocsFilter(_selectedDocs);
   }
 
   void _deleteDoc(_SourceDoc doc) {
@@ -377,6 +620,29 @@ class _ChatViewState extends State<_ChatView> {
       _selectedDocs.remove(doc.name);
       _sourceDocsList.removeWhere((d) => d.name == doc.name);
     });
+    context.read<ChatCubit>().setSelectedDocsFilter(_selectedDocs);
+  }
+
+  /// Muat ulang daftar dokumen yang sudah ter-ingest dari SQLite DB.
+  ///
+  /// Dipanggil saat halaman pertama kali dibuka (ikut mengisi sidebar) dan
+  /// setiap selesai import PDF / dokumen agar upload langsung tampil di
+  /// `KNOWLEDGE BASE` tanpa restart.
+  Future<void> _loadKnowledgeBaseFromDb() async {
+    final docs = await KnowledgeIngestService().listStoredDocuments();
+    if (!mounted) return;
+    setState(() {
+      _sourceDocsList = docs
+          .map(
+            (d) => _SourceDoc(
+              d.title,
+              d.mediaType.toLowerCase() == 'pdf' ? 'PDF' : 'DOC',
+            ),
+          )
+          .toList();
+      _selectedDocs = {for (final d in _sourceDocsList) d.name};
+    });
+    context.read<ChatCubit>().setSelectedDocsFilter(_selectedDocs);
   }
 
   void _openSidebarSheet(BuildContext context) {
@@ -400,7 +666,7 @@ class _ChatViewState extends State<_ChatView> {
                 sessions: _chatSessions,
                 activeSessionIndex: _activeSessionIndex,
                 onSelectSession: (idx) {
-                  setState(() => _activeSessionIndex = idx);
+                  _selectSession(idx);
                   Navigator.pop(context);
                 },
                 onNewSession: () {
@@ -443,7 +709,7 @@ class _ChatViewState extends State<_ChatView> {
                       child: _ExplorerSidebar(
                         sessions: _chatSessions,
                         activeSessionIndex: _activeSessionIndex,
-                        onSelectSession: (idx) => setState(() => _activeSessionIndex = idx),
+                        onSelectSession: _selectSession,
                         onNewSession: _addNewSession,
                         onDeleteSession: _deleteSession,
                         docs: _sourceDocsList,

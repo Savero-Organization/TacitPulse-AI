@@ -5,12 +5,12 @@ import '../../core/models/worker_profile.dart';
 import '../../core/theme/app_colors.dart';
 
 /// Halaman login — verifikasi NIK + nama terhadap profil tersimpan di
-/// perangkat (`worker_profile`). Muncul tiap aplikasi dibuka selama belum
-/// ada flag `logged_in`.
+/// perangkat (`worker_profile`). Muncul SETIAP kali aplikasi dibuka
+/// (sesi login tidak dipersist), dengan field auto-fill dari profil.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.onLogin});
 
-  /// Dipanggil setelah verifikasi lolos & flag `logged_in` tersimpan.
+  /// Dipanggil setelah verifikasi lolos.
   final VoidCallback onLogin;
 
   @override
@@ -23,6 +23,25 @@ class _LoginScreenState extends State<LoginScreen> {
   final _nikCtrl = TextEditingController();
   String? _error;
   bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prefill();
+  }
+
+  /// Auto-fill dari profil tersimpan — user tinggal tekan Masuk,
+  /// nggak perlu ketik ulang.
+  Future<void> _prefill() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('worker_profile');
+    if (raw == null || !mounted) return;
+    final profile = WorkerProfile.fromJson(raw);
+    setState(() {
+      _nameCtrl.text = profile.fullName;
+      _nikCtrl.text = profile.employeeId;
+    });
+  }
 
   @override
   void dispose() {
@@ -60,7 +79,6 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    await prefs.setBool('logged_in', true);
     widget.onLogin();
   }
 
